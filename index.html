@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>记账</title>
+  <meta name="description" content="极简个人记账：打开即输入，本地存储">
+  <meta name="theme-color" content="#F5F6F8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0C1117" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="记账">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+
+    <!-- ① 记账页 -->
+    <section id="view-entry" class="view active">
+      <header id="entry-head">
+        <span>今日已花 <b id="eh-day">¥0</b></span>
+        <span class="dot">·</span>
+        <span>本月 <b id="eh-month">¥0</b></span>
+      </header>
+      <div id="amount-wrap">
+        <span id="amount-cur">¥</span><span id="amount-str" class="dim">0</span>
+      </div>
+      <div id="keypad">
+        <button data-k="1">1</button>
+        <button data-k="2">2</button>
+        <button data-k="3">3</button>
+        <button data-k="4">4</button>
+        <button data-k="5">5</button>
+        <button data-k="6">6</button>
+        <button data-k="7">7</button>
+        <button data-k="8">8</button>
+        <button data-k="9">9</button>
+        <button data-k=".">.</button>
+        <button data-k="0">0</button>
+        <button data-k="del" id="key-del" aria-label="删除">⌫</button>
+        <button id="btn-commit">记一笔</button>
+      </div>
+    </section>
+
+    <!-- ② 统计页 -->
+    <section id="view-stats" class="view">
+      <div class="page-pad">
+        <h1>统计</h1>
+        <div class="cards">
+          <div class="card"><span class="card-t">今日</span><b id="st-day">¥0</b><span class="card-n" id="st-day-n">0 笔</span></div>
+          <div class="card"><span class="card-t">本周</span><b id="st-week">¥0</b><span class="card-n" id="st-week-n">0 笔</span></div>
+          <div class="card"><span class="card-t">本月</span><b id="st-month">¥0</b><span class="card-n" id="st-month-n">0 笔</span></div>
+        </div>
+        <div class="total-line" id="st-total">累计 ¥0 · 共 0 笔</div>
+        <div class="block">
+          <h2>近 7 天</h2>
+          <div id="chart7" class="bars"></div>
+        </div>
+        <div class="block" id="cat-block" hidden>
+          <h2 id="cat-title">本月分类</h2>
+          <div id="cat-rows"></div>
+        </div>
+        <div class="data-ops">
+          <button id="btn-export">导出数据</button>
+          <button id="btn-import">导入数据</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ③ 明细页 -->
+    <section id="view-list" class="view">
+      <div class="page-pad">
+        <h1>明细</h1>
+        <div id="rec-groups"></div>
+        <button id="btn-more" hidden>显示更早的记录</button>
+        <div id="list-empty" class="empty" hidden>还没有记录，去记一笔吧</div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 底部标签栏 -->
+  <nav id="tabbar">
+    <button data-view="entry" class="active" aria-label="记账">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 8.5v7M8.5 12h7"/></svg>
+      <span>记账</span>
+    </button>
+    <button data-view="stats" aria-label="统计">
+      <svg viewBox="0 0 24 24"><path d="M5 19V11M12 19V5M19 19v-6"/></svg>
+      <span>统计</span>
+    </button>
+    <button data-view="list" aria-label="明细">
+      <svg viewBox="0 0 24 24"><path d="M5 6.5h14M5 12h14M5 17.5h9"/></svg>
+      <span>明细</span>
+    </button>
+  </nav>
+
+  <!-- 编辑弹层 -->
+  <div id="edit-mask" class="mask" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>编辑记录</h2>
+        <button class="btn-close" id="btn-edit-close" aria-label="关闭">✕</button>
+      </div>
+      <label class="field"><span>金额</span><input id="edit-amount" inputmode="decimal" autocomplete="off"></label>
+      <label class="field"><span>备注</span><input id="edit-note" placeholder="例如：午饭" maxlength="60" autocomplete="off"></label>
+      <div class="field"><span>分类</span><div id="edit-cats" class="chips"></div></div>
+      <div id="edit-meta" class="meta"></div>
+      <div class="sheet-btns">
+        <button id="btn-del" class="danger">删除</button>
+        <button id="btn-save" class="primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 导出/导入弹层 -->
+  <div id="data-mask" class="mask" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2 id="data-title">导出数据</h2>
+        <button class="btn-close" id="btn-data-close" aria-label="关闭">✕</button>
+      </div>
+      <p id="data-hint" class="meta"></p>
+      <textarea id="data-text" spellcheck="false"></textarea>
+      <div class="sheet-btns">
+        <button id="btn-copy" class="primary">复制</button>
+        <button id="btn-do-import" class="primary">导入</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
