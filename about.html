@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>记账 · 说明书</title>
+  <meta name="description" content="一个两秒钟记完一笔的极简记账应用：为什么它长这样，以及怎么用">
+  <meta name="theme-color" content="#F5F6F8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0C1117" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <style>
+    :root {
+      --bg: #F5F6F8;
+      --card: #FFFFFF;
+      --text: #17202A;
+      --sub: #66707D;
+      --line: rgba(23, 32, 42, 0.10);
+      --accent: #10B981;
+      --accent-deep: #059669;
+      --accent-soft: rgba(16, 185, 129, 0.10);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0C1117;
+        --card: #161D26;
+        --text: #ECF1F6;
+        --sub: #97A1AE;
+        --line: rgba(236, 241, 246, 0.10);
+        --accent: #34D399;
+        --accent-deep: #10B981;
+        --accent-soft: rgba(52, 211, 153, 0.12);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+      font-size: 17px;
+      line-height: 1.9;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 40px 24px 64px; }
+    header { text-align: center; padding: 24px 0 8px; }
+    header img { width: 88px; height: 88px; border-radius: 22px; box-shadow: 0 8px 24px rgba(5, 150, 105, 0.25); }
+    h1 { font-size: 34px; margin: 18px 0 6px; letter-spacing: 2px; }
+    .tagline { color: var(--sub); margin: 0 0 24px; font-size: 16px; }
+    .cta {
+      display: inline-block;
+      background: var(--accent-deep);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 17px;
+      padding: 13px 44px;
+      border-radius: 16px;
+      letter-spacing: 1px;
+    }
+    .cta:active { filter: brightness(0.92); }
+    .cta-hint { font-size: 13px; color: var(--sub); margin-top: 10px; }
+    h2 {
+      font-size: 22px;
+      margin: 52px 0 14px;
+      padding-left: 13px;
+      border-left: 4px solid var(--accent);
+      line-height: 1.4;
+    }
+    h3 { font-size: 17.5px; margin: 30px 0 6px; }
+    p { margin: 12px 0; }
+    strong { font-weight: 650; }
+    .lead {
+      font-size: 19px;
+      font-weight: 650;
+      margin: 20px 0;
+    }
+    ol, ul { padding-left: 24px; margin: 12px 0; }
+    li { margin: 6px 0; }
+    .faq dt { font-weight: 650; margin-top: 18px; }
+    .faq dd { margin: 4px 0 0; color: var(--sub); }
+    .note {
+      background: var(--accent-soft);
+      border-radius: 14px;
+      padding: 14px 18px;
+      margin: 18px 0;
+      font-size: 15.5px;
+    }
+    footer {
+      margin-top: 64px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      color: var(--sub);
+      font-size: 14px;
+      text-align: center;
+    }
+    a { color: var(--accent-deep); }
+    footer a { color: var(--sub); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <header>
+      <img src="icons/icon-192.png" alt="记账应用图标">
+      <h1>记账</h1>
+      <p class="tagline">一个两秒钟记完一笔的极简记账应用</p>
+      <a class="cta" href="./">打开应用</a>
+      <p class="cta-hint">免费 · 无广告 · 无注册 · 账本只存在你自己的手机里</p>
+    </header>
+
+    <h2>三步装到手机上</h2>
+    <ol>
+      <li>用 <strong>Safari</strong>（iPhone）或 <strong>Chrome</strong>（安卓）打开上面的「打开应用」</li>
+      <li>iPhone 点<strong>分享按钮</strong>、安卓点<strong>浏览器菜单</strong>，选<strong>「添加到主屏幕」</strong></li>
+      <li>以后从主屏幕的绿色 ¥ 图标打开——全屏运行、离线可用，和普通 App 没有区别</li>
+    </ol>
+
+    <h2>为什么它长这样</h2>
+    <p class="lead">记账最大的敌人不是数学，是放弃。</p>
+    <p>几乎每个坚持不下来的账本，都是同一个剧本：付钱的那一刻正忙，而记账软件要你选账户、挑分类、打标签、写备注——嫌麻烦，想着「回头再记」；到了晚上，要么忘得干干净净，要么对着支付记录苦苦回忆。回忆是要消耗精力的，而且回忆出来的账并不可靠：靠回忆补记，最容易漏掉的恰恰是小额、高频的日常消费——最该被看见的那部分。又累，又不准，几天之后，人自然就放弃了。</p>
+    <p>所以这个应用把宝全押在一件事上：<strong>让「记下来」这个动作便宜到无法拒绝。</strong></p>
+
+    <h3>两秒钟法则</h3>
+    <p>打开应用，数字键盘已经等在那里；按下金额，点「记一笔」——两秒，完成。不需要穿过菜单，不需要回答任何问题。人的动机每天都在波动，靠不住；唯一稳定的办法，是把事情本身变容易。对一天要发生好几次的动作，每省掉一步点击，它活下来的概率就大一分。</p>
+
+    <h3>「回头再记」是个骗局</h3>
+    <p>「记得稍后去做某事」是人类记忆里最不可靠的功能之一——心理学称之为前瞻记忆，没有外部提醒时，它的失败率高得惊人。这不是你懒，是人脑的出厂设置如此。与其对抗天性，不如顺应它：在消费发生的当下、记忆还热着的时候，用两秒钟把数字放进账本。</p>
+
+    <h3>先记下来，想整理的时候再整理</h3>
+    <p>付钱的那一刻，你只需要记一个数字。备注（和谁吃的饭）和分类（餐饮、交通……）都可以之后在明细里随手补——也可以永远不补，应用照样把每天、每周、每月的数字算得清清楚楚。把「捕捉」和「整理」分开，是因为它们适合发生在不同的时刻：<strong>捕捉要快，整理要闲。</strong>多数记账软件把所有字段都堆在录入那一刻，等于让每一笔账都交一遍「填表税」。</p>
+
+    <h3>没有的功能，是故意没有的</h3>
+    <p>这里没有预算提醒，没有账户体系，没有云同步，没有签到和小红点。每一个候选功能都要过同一道审判：<strong>它会不会拖慢那两秒？</strong>会，就不做。简约不是做得少，是把复杂度砍到只剩本质。</p>
+
+    <h3>它不打扰你，但立刻回应你</h3>
+    <p>应用从不推送、从不提醒——工具应该在被召唤时出现，其余时间保持沉默。但每记一笔，你都会立刻看到「今日已花」跳了一下。这一眼，就是坚持下去的燃料。</p>
+
+    <div class="note">
+      <strong>一个诚实的提醒：</strong>零摩擦解决的是「嫌麻烦」，解决不了「忘了打开」。头两三个星期，请有意识地把两件事绑在一起：<strong>付完钱，顺手记。</strong>因为动作只要两秒，这条反射弧很快就会焊牢——之后它就不再消耗你的意志力了。
+    </div>
+
+    <h3>时间会给你回报</h3>
+    <p>今天随手按下的一个数字，一个月后是月度汇总里的一行，一年后是十二行。你不需要做任何额外的事，数据自己会长成答案：这个月比上个月多花了多少、钱都去了哪儿。记录越久，这本账越值钱。</p>
+
+    <h2>怎么用</h2>
+    <p><strong>记一笔</strong>：打开应用 → 按金额 → 点「记一笔」。按错了点 ⌫ 删一位，长按 ⌫ 全部清空。</p>
+    <p><strong>看统计</strong>：底部第二个标签。今日 / 本周（周一起算）/ 本月三张卡片、累计总额、近 7 天柱状图、<strong>月度汇总</strong>（每个月花了多少，一行一目了然），以及本月分类占比（给账目补过分类后出现）。</p>
+    <p><strong>补细节、改错</strong>：底部第三个标签「明细」，账目按天分组。点任何一笔，可以补备注、选分类、改金额，或删除（需要点两次「删除」确认，防止手滑）。</p>
+    <p><strong>备份</strong>：统计页底部「导出数据」，一键复制成一段文本，粘到备忘录或发给自己就是备份；换手机时用「导入数据」粘回来，一笔不少。</p>
+
+    <h2>你的数据</h2>
+    <ul>
+      <li>所有账目<strong>只存在你手机本地</strong>，不上传到任何地方——这个应用根本没有后台服务器。</li>
+      <li>应用代码<a href="https://github.com/allenliu2046/jizhang" rel="noopener">完全公开</a>，任何人都可以检查它做了什么；但没有任何人能看到你的账本。</li>
+      <li>建议每隔一段时间「导出数据」做个备份，粘在备忘录里即可。</li>
+    </ul>
+
+    <h2>常见问题</h2>
+    <dl class="faq">
+      <dt>收费吗？</dt>
+      <dd>不收费，没有广告，没有会员。这是一个个人项目，托管在免费服务上。</dd>
+      <dt>数据会丢吗？</dt>
+      <dd>数据存在手机本地，日常使用不会丢。但如果删除应用图标并清除浏览器数据，账本会一起被清掉——所以请偶尔导出备份。</dd>
+      <dt>为什么没有预算提醒、周报推送？</dt>
+      <dd>故意的。这个应用的哲学是保持沉默、绝不打扰；它相信统计页上清清楚楚的数字，比一条制造焦虑的推送更有用。</dd>
+      <dt>能补记昨天的账吗？</dt>
+      <dd>目前不能，每笔账记的是当下时间。这是设计上的取舍：它鼓励你在消费发生的那一刻就记——那也是数字最准的时刻。</dd>
+      <dt>真忘了记怎么办？</dt>
+      <dd>想起来的时候记上就好，哪怕金额只是个大概。一笔略有误差的账，远好过一笔不存在的账。</dd>
+    </dl>
+
+    <p style="text-align:center; margin-top: 48px;">
+      <a class="cta" href="./">开始记第一笔</a>
+    </p>
+
+    <footer>
+      记账 · 极简个人记账应用<br>
+      <a href="https://github.com/allenliu2046/jizhang" rel="noopener">源代码</a> · 无后台 · 数据在你自己手里
+    </footer>
+
+  </div>
+</body>
+</html>
