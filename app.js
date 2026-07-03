@@ -230,6 +230,41 @@ function renderStats() {
 
   renderChart7();
   renderCats(month.sum);
+  renderMonths();
+}
+
+function renderMonths() {
+  const block = $('#months-block');
+  const rows = $('#month-rows');
+  rows.textContent = '';
+  if (records.length === 0) {
+    block.hidden = true;
+    return;
+  }
+  const byMonth = new Map(); // key = 年*12+月，天然可按数字排序
+  for (const r of records) {
+    const d = new Date(r.ts);
+    const key = d.getFullYear() * 12 + d.getMonth();
+    const cur = byMonth.get(key) || { sum: 0, count: 0 };
+    cur.sum += r.cents;
+    cur.count++;
+    byMonth.set(key, cur);
+  }
+  block.hidden = false;
+  const now = new Date();
+  const nowKey = now.getFullYear() * 12 + now.getMonth();
+  for (const key of [...byMonth.keys()].sort((a, b) => b - a)) {
+    const { sum, count } = byMonth.get(key);
+    const row = el('div', 'month-row');
+    const name = el('span', 'month-name', Math.floor(key / 12) + '年' + (key % 12 + 1) + '月');
+    if (key === nowKey) name.appendChild(el('i', 'month-now', '本月'));
+    row.appendChild(name);
+    const amt = el('span', 'month-amt');
+    amt.appendChild(el('b', null, fmtMoney(sum)));
+    amt.appendChild(el('span', 'month-n', ' · ' + count + ' 笔'));
+    row.appendChild(amt);
+    rows.appendChild(row);
+  }
 }
 
 function renderChart7() {

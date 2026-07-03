@@ -1,7 +1,7 @@
 'use strict';
 
 // 改动任何文件后发布新版本时，递增这个版本号
-const CACHE = 'jz-v1';
+const CACHE = 'jz-v2';
 const ASSETS = [
   './',
   'index.html',
