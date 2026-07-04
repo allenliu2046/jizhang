@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>记账 · 宣传视频渲染器</title>
+  <style>
+    body { margin: 0; background: #22262B; display: flex; flex-direction: column; align-items: center; font-family: -apple-system, "PingFang SC", sans-serif; }
+    canvas { width: 405px; height: 720px; margin-top: 12px; box-shadow: 0 6px 30px rgba(0, 0, 0, 0.5); }
+    #hud { color: #cfd6dd; font-size: 13px; padding: 10px 0; }
+  </style>
+</head>
+<body>
+  <canvas id="cv" width="1080" height="1920"></canvas>
+  <div id="hud">加载中…</div>
+<script>
+'use strict';
+
+/* ================= 基础 ================= */
+const W = 1080, H = 1920, FPS = 30, DUR = 30.0, TOTAL = DUR * FPS;
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const hud = document.getElementById('hud');
+
+const COL = {
+  bg: '#F5F6F8', card: '#FFFFFF', text: '#17202A', sub: '#8A94A3',
+  accent: '#10B981', deep: '#059669', soft: 'rgba(16,185,129,0.12)',
+  bgD: '#0C1117', cardD: '#161D26', textD: '#ECF1F6', subD: '#97A1AE',
+  keyPress: '#E8EBEF', danger: '#FF6369', barMuted: '#D7DCE3',
+  stage: '#E9EDF1'
+};
+const FONT = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif';
+const font = (w, s) => w + ' ' + s + 'px ' + FONT;
+
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const seg = (t, a, b) => clamp01((t - a) / (b - a));
+const lerp = (a, b, p) => a + (b - a) * p;
+const easeOut = p => 1 - Math.pow(1 - p, 3);
+const easeInOut = p => p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+const easeOutBack = p => { const c = 1.70158; return 1 + (c + 1) * Math.pow(p - 1, 3) + c * Math.pow(p - 1, 2); };
+
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+
+function measure(str, weight, size) { ctx.font = font(weight || 400, size || 40); return ctx.measureText(str).width; }
+
+function text(str, x, y, o = {}) {
+  ctx.save();
+  ctx.globalAlpha *= (o.alpha == null ? 1 : o.alpha);
+  ctx.fillStyle = o.color || COL.text;
+  ctx.font = font(o.weight || 400, o.size || 40);
+  ctx.textAlign = o.align || 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.letterSpacing = (o.ls || 0) + 'px';
+  ctx.fillText(str, x, y);
+  ctx.letterSpacing = '0px';
+  ctx.restore();
+}
+
+// 一行内混排不同颜色/字号的文字，整体居中于 cx；返回各段位置
+function segLine(segs, cx, y, o = {}) {
+  const bw = o.weight || 400, bs = o.size || 40;
+  let total = 0;
+  for (const g of segs) total += measure(g.t, g.weight || bw, g.size || bs);
+  let x = cx - total / 2;
+  const pos = [];
+  ctx.save();
+  ctx.globalAlpha *= (o.alpha == null ? 1 : o.alpha);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  for (const g of segs) {
+    ctx.font = font(g.weight || bw, g.size || bs);
+    ctx.fillStyle = g.color || o.color || COL.text;
+    const w = ctx.measureText(g.t).width;
+    ctx.fillText(g.t, x, y);
+    pos.push({ x, w });
+    x += w;
+  }
+  ctx.restore();
+  return pos;
+}
+
+/* ================= 素材 ================= */
+const iconImg = new Image(); iconImg.src = '/icons/icon-192.png';
+const qrImg = new Image(); qrImg.src = '/tools/promo/qr.png';
+let iconOk = false, qrOk = false;
+
+/* ================= 场景 1：痛点（0 – 7.5s） ================= */
+const ROWS = ['金额', '账户', '分类', '子分类', '标签', '成员', '商家', '门店', '币种', '报销状态', '优惠券', '项目', '时间', '地点', '备注', '上传小票'];
+const ROW_RIGHT = { '金额': '0.00', '时间': '2026-07-04 12:30', '备注': '点击输入…' };
+const rowTimes = [];
+{ let rt = 2.25, iv = 0.40; for (let i = 0; i < ROWS.length; i++) { rowTimes.push(rt); rt += iv; iv = Math.max(0.08, iv * 0.84); } }
+
+function scenePain(t) {
+  ctx.fillStyle = COL.bgD; ctx.fillRect(0, 0, W, H);
+
+  // 标题：先居中出现，表单来了之后移到顶部（画在表单下层，最终被表单“吞没”）
+  const a1 = easeOut(seg(t, 0.15, 0.85));
+  const a2 = easeOut(seg(t, 0.40, 1.10));
+  const m = easeInOut(seg(t, 1.75, 2.35));
+  const size = lerp(96, 62, m);
+  const cy = lerp(800, 190, m);
+  if (a1 > 0) text('记一笔账，', W / 2, cy + (1 - a1) * 50, { size, weight: 700, color: COL.textD, alpha: a1 });
+  if (a2 > 0) text('要填多少项？', W / 2, cy + size * 1.5 + (1 - a2) * 50, { size, weight: 700, color: COL.textD, alpha: a2 });
+
+  // 戏仿的复杂表单
+  const cardIn = easeOut(seg(t, 2.0, 2.6));
+  if (cardIn > 0) {
+    const shown = rowTimes.filter(rt => t >= rt).length;
+    const rowH = 104, padT = 36;
+    const contentH = padT + 44 + shown * rowH + 30;
+    const baseY = lerp(H + 40, 430, cardIn);
+    const over = Math.max(0, contentH - (H - 430 - 40));
+    const y0 = baseY - over; // 行数超出屏幕就往上顶：滚不完的表单
+    const amp = t < 5.2 ? lerp(0, 8, seg(t, 3.4, 5.0)) : 0;
+    ctx.save();
+    ctx.translate(Math.sin(t * 37) * amp, Math.cos(t * 29) * amp * 0.6);
+    rr(100, y0, 880, Math.max(contentH, 320), 36);
+    ctx.fillStyle = COL.cardD; ctx.fill();
+    text('添加一笔支出', 140, y0 + padT + 22, { size: 34, weight: 600, color: COL.subD, align: 'left' });
+    for (let i = 0; i < shown; i++) {
+      const p = easeOut(seg(t, rowTimes[i], rowTimes[i] + 0.22));
+      const ry = y0 + padT + 60 + i * rowH + (1 - p) * 26;
+      ctx.save();
+      ctx.globalAlpha = p;
+      ctx.fillStyle = 'rgba(236,241,246,0.07)';
+      ctx.fillRect(140, ry + rowH - 12, 800, 2);
+      text(ROWS[i], 140, ry + 60, { size: 40, color: COL.textD, align: 'left' });
+      if ([1, 2, 4, 9].includes(i)) text('*', 148 + measure(ROWS[i], 400, 40), ry + 60, { size: 40, weight: 700, color: COL.danger, align: 'left' });
+      text(ROW_RIGHT[ROWS[i]] || '请选择 ›', 940, ry + 58, { size: 34, color: COL.subD, align: 'right' });
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  // 压暗 + punchline
+  const dim = 0.76 * seg(t, 5.2, 5.7);
+  if (dim > 0) { ctx.fillStyle = 'rgba(4,7,11,' + dim + ')'; ctx.fillRect(0, 0, W, H); }
+  const p1 = easeOut(seg(t, 5.45, 6.0));
+  if (p1 > 0) text('太麻烦，想着回头再记……', W / 2, 880 + (1 - p1) * 40, { size: 58, weight: 500, color: '#ECF1F6', alpha: p1 });
+  const p2 = easeOut(seg(t, 6.35, 6.9));
+  if (p2 > 0) {
+    ctx.save();
+    ctx.globalAlpha = p2;
+    segLine([
+      { t: '然后，就' }, { t: '忘了', color: COL.danger, weight: 800 }, { t: '。' }
+    ], W / 2, 1040 + (1 - p2) * 40, { size: 76, weight: 700, color: '#ECF1F6' });
+    ctx.restore();
+  }
+}
+
+/* ================= 场景 2：转折（7.5 – 10s） ================= */
+function scenePivot(t) {
+  const rel = t - 7.5;
+  ctx.fillStyle = '#080C10'; ctx.fillRect(0, 0, W, H);
+  const r = easeInOut(seg(rel, 0, 0.55)) * 1180;
+  if (r > 0) { ctx.fillStyle = COL.stage; ctx.beginPath(); ctx.arc(W / 2, H / 2, r, 0, Math.PI * 2); ctx.fill(); }
+  const p1 = easeOut(seg(rel, 0.55, 1.05));
+  if (p1 > 0) text('如果记一笔，', W / 2, 880 + (1 - p1) * 46, { size: 84, weight: 600, alpha: p1 });
+  const p2 = seg(rel, 0.8, 1.35);
+  if (p2 > 0) {
+    const s = 0.9 + 0.1 * easeOutBack(p2);
+    ctx.save();
+    ctx.globalAlpha = clamp01(p2 * 1.6);
+    ctx.translate(W / 2, 1060);
+    ctx.scale(s, s);
+    const pos = segLine([
+      { t: '只要 ' }, { t: '两秒', color: COL.deep, weight: 800 }, { t: ' 呢？' }
+    ], 0, 0, { size: 104, weight: 700 });
+    const u = easeOut(seg(rel, 1.35, 1.7));
+    if (u > 0) { rr(pos[1].x, 26, pos[1].w * u, 14, 7); ctx.fillStyle = COL.accent; ctx.fill(); }
+    ctx.restore();
+  }
+}
+
+/* ================= 手机样机（场景 3 / 4 共用） ================= */
+const PH = { x: 125, y: 110, w: 830, h: 1700, r: 112 };
+const SC = { x: 143, y: 128, w: 794, h: 1664, r: 94 };
+const TABS_H = 116, COMMIT_H = 126, KEY_H = 120, KEY_GAP = 20, PAD_X = 28;
+const COMMIT_Y = SC.y + SC.h - TABS_H - 24 - COMMIT_H;
+const GRID_TOP = COMMIT_Y - 4 * (KEY_H + KEY_GAP);
+const KEY_W = (SC.w - PAD_X * 2 - KEY_GAP * 2) / 3;
+const KEY_POS = { '1': [0, 0], '2': [0, 1], '3': [0, 2], '4': [1, 0], '5': [1, 1], '6': [1, 2], '7': [2, 0], '8': [2, 1], '9': [2, 2], '.': [3, 0], '0': [3, 1], 'del': [3, 2] };
+
+function keyRect(k) {
+  const [r, c] = KEY_POS[k];
+  return { x: SC.x + PAD_X + c * (KEY_W + KEY_GAP), y: GRID_TOP + r * (KEY_H + KEY_GAP), w: KEY_W, h: KEY_H };
+}
+
+function drawPhoneShell() {
+  ctx.save();
+  ctx.shadowColor = 'rgba(10,16,24,0.4)';
+  ctx.shadowBlur = 70;
+  ctx.shadowOffsetY = 26;
+  rr(PH.x, PH.y, PH.w, PH.h, PH.r);
+  ctx.fillStyle = '#0B0D10'; ctx.fill();
+  ctx.restore();
+  rr(SC.x, SC.y, SC.w, SC.h, SC.r);
+  ctx.fillStyle = COL.bg; ctx.fill();
+}
+
+function drawNotch() {
+  rr(W / 2 - 88, SC.y + 16, 176, 36, 18);
+  ctx.fillStyle = 'rgba(11,13,16,0.95)'; ctx.fill();
+}
+
+// 记账页（应用主界面的重绘）
+function drawEntryScreen(st) {
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(SC.x, SC.y, SC.w, SC.h);
+
+  // 顶部「今日已花」
+  ctx.save();
+  ctx.translate(W / 2, SC.y + 170);
+  const hs = 1 + 0.18 * (st.headPop || 0);
+  ctx.scale(hs, hs);
+  segLine([
+    { t: '今日已花 ', color: COL.sub, size: 34 },
+    { t: st.headMoney, color: COL.text, size: 37, weight: 650 },
+    { t: ' · ' + st.headCount + ' 笔', color: COL.sub, size: 34 }
+  ], 0, 0, {});
+  ctx.restore();
+
+  // 金额
+  ctx.save();
+  ctx.translate(W / 2, SC.y + 560);
+  const as = 1 + 0.14 * (st.amountPop || 0);
+  ctx.scale(as, as);
+  const dim = st.amountStr === '0';
+  segLine([
+    { t: '¥ ', color: COL.sub, size: 64, weight: 300 },
+    { t: st.amountStr, color: dim ? COL.sub : COL.text, size: 136, weight: 300 }
+  ], 0, 0, { alpha: dim ? 0.5 : 1 });
+  ctx.restore();
+
+  // 键盘
+  for (const k of Object.keys(KEY_POS)) {
+    const kr = keyRect(k);
+    const pr = (st.pressed && st.pressed.key === k) ? st.pressed.p : 0;
+    ctx.save();
+    ctx.translate(kr.x + kr.w / 2, kr.y + kr.h / 2);
+    ctx.scale(1 - 0.05 * pr, 1 - 0.05 * pr);
+    rr(-kr.w / 2, -kr.h / 2, kr.w, kr.h, 30);
+    ctx.fillStyle = pr > 0 ? COL.keyPress : COL.card;
+    ctx.fill();
+    if (k === 'del') text('⌫', 0, 16, { size: 44, color: COL.sub });
+    else text(k, 0, 19, { size: 54, weight: 500 });
+    ctx.restore();
+  }
+
+  // 记一笔按钮
+  const gr = { x: SC.x + PAD_X, y: COMMIT_Y, w: SC.w - PAD_X * 2, h: COMMIT_H };
+  const gp = (st.pressed && st.pressed.key === 'go') ? st.pressed.p : 0;
+  ctx.save();
+  ctx.translate(gr.x + gr.w / 2, gr.y + gr.h / 2);
+  ctx.scale(1 - 0.03 * gp, 1 - 0.03 * gp);
+  rr(-gr.w / 2, -gr.h / 2, gr.w, gr.h, 30);
+  ctx.fillStyle = COL.deep; ctx.fill();
+  if (st.btnFlash > 0) { rr(-gr.w / 2, -gr.h / 2, gr.w, gr.h, 30); ctx.fillStyle = 'rgba(255,255,255,' + 0.3 * st.btnFlash + ')'; ctx.fill(); }
+  text('记 一 笔', 0, 16, { size: 44, weight: 600, color: '#fff', ls: 6 });
+  ctx.restore();
+
+  drawTabbar(0);
+
+  // toast
+  if (st.toastA > 0) {
+    const label = '已记入 ¥25.5';
+    const tw = measure(label, 500, 34) + 72;
+    const ty = SC.y + SC.h - 400 + (1 - st.toastIn) * 30;
+    ctx.save();
+    ctx.globalAlpha = st.toastA;
+    rr(W / 2 - tw / 2, ty, tw, 84, 42);
+    ctx.fillStyle = 'rgba(23,32,42,0.92)'; ctx.fill();
+    text(label, W / 2, ty + 55, { size: 34, weight: 500, color: '#F5F6F8' });
+    ctx.restore();
+  }
+}
+
+function drawTabbar(active) {
+  const ty = SC.y + SC.h - TABS_H;
+  ctx.fillStyle = 'rgba(23,32,42,0.08)';
+  ctx.fillRect(SC.x, ty, SC.w, 2);
+  ['记账', '统计', '明细'].forEach((s, i) => {
+    const x = SC.x + SC.w * (1 + 2 * i) / 6;
+    text(s, x, ty + 72, { size: 30, weight: i === active ? 650 : 400, color: i === active ? COL.deep : COL.sub });
+  });
+}
+
+/* ================= 场景 3：两秒演示（10 – 18.5s） ================= */
+const TAPS = [
+  { key: '2', at: 1.2 }, { key: '5', at: 1.7 }, { key: '.', at: 2.2 },
+  { key: '5', at: 2.7 }, { key: 'go', at: 3.3 }
+];
+
+function demoState(rel) {
+  const st = { headMoney: '¥38', headCount: 3, amountStr: '0', headPop: 0, amountPop: 0, pressed: null, btnFlash: 0, toastA: 0, toastIn: 1 };
+  let s = '', lastChange = -9;
+  for (const tp of TAPS) {
+    if (rel < tp.at) continue;
+    if (tp.key === 'go') { s = ''; } else s += tp.key;
+    lastChange = tp.at;
+    const pr = 1 - seg(rel, tp.at + 0.03, tp.at + 0.2);
+    if (pr > 0) st.pressed = { key: tp.key, p: pr };
+  }
+  st.amountStr = s === '' ? '0' : s;
+  st.amountPop = lastChange > 0 ? 1 - seg(rel, lastChange, lastChange + 0.2) : 0;
+  if (rel >= 3.3) {
+    st.headMoney = '¥63.5'; st.headCount = 4;
+    st.headPop = 1 - seg(rel, 3.35, 3.62);
+    st.btnFlash = 1 - seg(rel, 3.3, 3.62);
+    st.toastIn = easeOut(seg(rel, 3.42, 3.68));
+    st.toastA = st.toastIn * (1 - seg(rel, 5.2, 5.5));
+  }
+  return st;
+}
+
+function sceneDemo(t) {
+  const rel = t - 10;
+  ctx.fillStyle = COL.stage; ctx.fillRect(0, 0, W, H);
+
+  const p = easeOut(seg(rel, 0, 0.7));
+  ctx.save();
+  ctx.globalAlpha = p;
+  ctx.translate(0, (1 - p) * 1500);
+  drawPhoneShell();
+  ctx.save();
+  rr(SC.x, SC.y, SC.w, SC.h, SC.r); ctx.clip();
+  drawEntryScreen(demoState(rel));
+  ctx.restore();
+  drawNotch();
+
+  // 指尖圆点
+  for (const tp of TAPS) {
+    const a = seg(rel, tp.at - 0.22, tp.at) * (1 - seg(rel, tp.at + 0.12, tp.at + 0.36));
+    if (a <= 0) continue;
+    const kr = tp.key === 'go'
+      ? { x: SC.x + PAD_X, y: COMMIT_Y, w: SC.w - PAD_X * 2, h: COMMIT_H }
+      : keyRect(tp.key);
+    const cx = kr.x + kr.w / 2, cyy = kr.y + kr.h / 2;
+    const sc = lerp(1.45, 1, easeOut(seg(rel, tp.at - 0.22, tp.at + 0.02)));
+    ctx.save();
+    ctx.globalAlpha = a * 0.55;
+    ctx.beginPath(); ctx.arc(cx, cyy, 44 * sc, 0, Math.PI * 2);
+    ctx.fillStyle = '#28323E'; ctx.fill();
+    ctx.globalAlpha = a * 0.9;
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath(); ctx.arc(cx, cyy, 44 * sc, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // 秒表
+  const chipA = easeOut(seg(rel, 0.85, 1.15));
+  if (chipA > 0) {
+    const sw = rel < 1.2 ? 0 : Math.min(rel - 1.2, 2.1);
+    const frozen = rel >= 3.3;
+    const pulse = frozen ? 1 + 0.16 * (1 - seg(rel, 3.3, 3.58)) : 1;
+    const cw = 252, ch = 96, cx = W - 64 - cw / 2, cyy = 156 + ch / 2;
+    ctx.save();
+    ctx.globalAlpha = chipA;
+    ctx.translate(cx, cyy);
+    ctx.scale(pulse, pulse);
+    ctx.shadowColor = 'rgba(10,16,24,0.35)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 8;
+    rr(-cw / 2, -ch / 2, cw, ch, ch / 2);
+    ctx.fillStyle = frozen ? COL.deep : 'rgba(12,17,23,0.88)';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.beginPath(); ctx.arc(-cw / 2 + 52, 0, 12, 0, Math.PI * 2);
+    ctx.fillStyle = frozen ? '#B8F5DC' : COL.accent; ctx.fill();
+    text(sw.toFixed(1) + ' s', 22, 16, { size: 46, weight: 700, color: '#fff' });
+    ctx.restore();
+  }
+
+  // 字幕
+  const scrim = 0.68 * easeOut(seg(rel, 5.6, 6.05));
+  if (scrim > 0) {
+    ctx.fillStyle = 'rgba(8,12,16,' + scrim + ')'; ctx.fillRect(0, 0, W, H);
+    const c1 = easeOut(seg(rel, 5.75, 6.3));
+    if (c1 > 0) {
+      ctx.save();
+      ctx.globalAlpha = c1;
+      segLine([
+        { t: '2.1 秒', color: '#34D399', size: 118, weight: 800 },
+        { t: '，记完了。', color: '#F2F6FA', size: 78, weight: 600 }
+      ], W / 2, 890 + (1 - c1) * 40, {});
+      ctx.restore();
+    }
+    const c2 = easeOut(seg(rel, 6.4, 6.9));
+    if (c2 > 0) text('从打开到记完，就这么快', W / 2, 1020 + (1 - c2) * 30, { size: 44, color: 'rgba(242,246,250,0.78)', alpha: c2 });
+  }
+}
+
+/* ================= 场景 4：统计（18.5 – 25s） ================= */
+function drawStatsScreen(rel) {
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(SC.x, SC.y, SC.w, SC.h);
+  text('统计', SC.x + 40, SC.y + 160, { size: 60, weight: 700, align: 'left' });
+
+  // 三张卡片
+  const cards = [
+    { t: '今日', v: 63.5, n: '4 笔', dec: 1 },
+    { t: '本周', v: 328, n: '18 笔', dec: 0 },
+    { t: '本月', v: 1276, n: '67 笔', dec: 0 }
+  ];
+  const cw = (SC.w - 72 - 32) / 3;
+  const countP = easeOut(seg(rel, 0.45, 1.5));
+  cards.forEach((c, i) => {
+    const x = SC.x + 36 + i * (cw + 16), y = SC.y + 210;
+    rr(x, y, cw, 210, 28); ctx.fillStyle = COL.card; ctx.fill();
+    text(c.t, x + 28, y + 66, { size: 28, color: COL.sub, align: 'left' });
+    const val = c.v * countP;
+    const str = '¥' + (c.dec ? val.toFixed(1) : Math.round(val).toLocaleString('en-US'));
+    text(str, x + 28, y + 130, { size: 40, weight: 700, align: 'left' });
+    text(c.n, x + 28, y + 172, { size: 24, color: COL.sub, align: 'left', alpha: countP });
+  });
+
+  // 近 7 天
+  const b1y = SC.y + 456;
+  rr(SC.x + 36, b1y, SC.w - 72, 520, 28); ctx.fillStyle = COL.card; ctx.fill();
+  text('近 7 天', SC.x + 72, b1y + 64, { size: 30, weight: 600, color: COL.sub, align: 'left' });
+  const hts = [0.36, 0.60, 0.30, 0.76, 0.50, 0.86, 0.44];
+  const vals = [45, 74, 36, 93, 62, 105, 64];
+  const labs = ['六', '日', '一', '二', '三', '四', '今'];
+  const innerW = SC.w - 72 - 72, slotW = innerW / 7, maxH = 290, baseY = b1y + 430;
+  for (let i = 0; i < 7; i++) {
+    const bp = easeOut(seg(rel, 1.0 + i * 0.11, 1.5 + i * 0.11));
+    const bh = Math.max(6, hts[i] * maxH * bp);
+    const bx = SC.x + 72 + i * slotW + (slotW - 54) / 2;
+    rr(bx, baseY - bh, 54, bh, [12, 12, 5, 5]);
+    ctx.fillStyle = i === 6 ? COL.accent : COL.barMuted;
+    ctx.fill();
+    if (bp > 0.9) text(String(vals[i]), bx + 27, baseY - bh - 16, { size: 24, color: COL.sub, alpha: seg(bp, 0.9, 1) });
+    text(labs[i], bx + 27, baseY + 46, { size: 26, weight: i === 6 ? 650 : 400, color: i === 6 ? COL.deep : COL.sub });
+  }
+
+  // 月度汇总
+  const b2y = b1y + 520 + 24;
+  rr(SC.x + 36, b2y, SC.w - 72, 400, 28); ctx.fillStyle = COL.card; ctx.fill();
+  text('月度汇总', SC.x + 72, b2y + 64, { size: 30, weight: 600, color: COL.sub, align: 'left' });
+  const months = [
+    ['2026年7月', '¥1,276', '67 笔', true],
+    ['2026年6月', '¥2,410', '118 笔', false],
+    ['2026年5月', '¥2,183', '105 笔', false]
+  ];
+  months.forEach((mrow, i) => {
+    const mp = easeOut(seg(rel, 2.35 + i * 0.22, 2.75 + i * 0.22));
+    if (mp <= 0) return;
+    const my = b2y + 100 + i * 100;
+    ctx.save();
+    ctx.globalAlpha = mp;
+    ctx.translate((1 - mp) * 46, 0);
+    if (i > 0) { ctx.fillStyle = 'rgba(23,32,42,0.08)'; ctx.fillRect(SC.x + 72, my - 4, SC.w - 144, 2); }
+    text(mrow[0], SC.x + 72, my + 62, { size: 32, align: 'left' });
+    if (mrow[3]) {
+      const nx = SC.x + 72 + measure(mrow[0], 400, 32) + 16;
+      rr(nx, my + 30, 92, 44, 14); ctx.fillStyle = COL.soft; ctx.fill();
+      text('本月', nx + 46, my + 62, { size: 24, color: COL.deep });
+    }
+    ctx.save();
+    ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+    ctx.font = font(400, 24); ctx.fillStyle = COL.sub;
+    const nw = ctx.measureText(' · ' + mrow[2]).width;
+    ctx.fillText(' · ' + mrow[2], SC.x + SC.w - 72, my + 62);
+    ctx.font = font(700, 34); ctx.fillStyle = COL.text;
+    ctx.fillText(mrow[1], SC.x + SC.w - 72 - nw, my + 62);
+    ctx.restore();
+    ctx.restore();
+  });
+
+  drawTabbar(1);
+}
+
+function sceneStats(t) {
+  const rel = t - 18.5;
+  ctx.fillStyle = COL.stage; ctx.fillRect(0, 0, W, H);
+  drawPhoneShell();
+  const m = easeInOut(seg(rel, 0.05, 0.5));
+  ctx.save();
+  rr(SC.x, SC.y, SC.w, SC.h, SC.r); ctx.clip();
+  if (m < 1) {
+    ctx.save();
+    ctx.translate(-m * SC.w, 0);
+    drawEntryScreen({ headMoney: '¥63.5', headCount: 4, amountStr: '0', toastA: 0, toastIn: 1, btnFlash: 0, pressed: null, headPop: 0, amountPop: 0 });
+    ctx.restore();
+  }
+  ctx.save();
+  ctx.translate((1 - m) * SC.w, 0);
+  drawStatsScreen(rel);
+  ctx.restore();
+  ctx.restore();
+  drawNotch();
+
+  // 字幕
+  const scrim = 0.55 * easeOut(seg(rel, 4.0, 4.45));
+  if (scrim > 0) {
+    ctx.fillStyle = 'rgba(8,12,16,' + scrim + ')'; ctx.fillRect(0, 0, W, H);
+    const c1 = easeOut(seg(rel, 4.15, 4.65));
+    if (c1 > 0) text('每天、每周、每月', W / 2, 920 + (1 - c1) * 40, { size: 74, weight: 600, color: '#F2F6FA', alpha: c1 });
+    const c2 = easeOut(seg(rel, 4.6, 5.1));
+    if (c2 > 0) {
+      ctx.save();
+      ctx.globalAlpha = c2;
+      segLine([
+        { t: '花在哪，', color: '#F2F6FA' },
+        { t: '清清楚楚', color: '#34D399', weight: 800 },
+        { t: '。', color: '#F2F6FA' }
+      ], W / 2, 1060 + (1 - c2) * 30, { size: 74, weight: 600 });
+      ctx.restore();
+    }
+  }
+}
+
+/* ================= 场景 5：收尾（25 – 30s） ================= */
+function sceneEnd(t) {
+  const rel = t - 25;
+  ctx.fillStyle = COL.stage; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = COL.bg;
+  ctx.globalAlpha = seg(rel, 0, 0.4);
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+
+  // 图标
+  const ip = seg(rel, 0.1, 0.75);
+  if (ip > 0) {
+    const s = Math.max(0.001, easeOutBack(ip));
+    const fy = 470 + Math.sin(rel * 1.8) * 5;
+    ctx.save();
+    ctx.translate(W / 2, fy);
+    ctx.scale(s, s);
+    ctx.shadowColor = 'rgba(5,150,105,0.32)';
+    ctx.shadowBlur = 70;
+    ctx.shadowOffsetY = 22;
+    rr(-125, -125, 250, 250, 58);
+    ctx.fillStyle = '#0FA57B'; ctx.fill();
+    ctx.shadowColor = 'transparent';
+    if (iconOk) {
+      ctx.save();
+      rr(-125, -125, 250, 250, 58); ctx.clip();
+      ctx.drawImage(iconImg, -125, -125, 250, 250);
+      ctx.restore();
+    } else {
+      text('¥', 0, 48, { size: 140, weight: 700, color: '#fff' });
+    }
+    ctx.restore();
+  }
+
+  const tp1 = easeOut(seg(rel, 0.5, 0.95));
+  if (tp1 > 0) text('记账', W / 2, 742 + (1 - tp1) * 30, { size: 92, weight: 700, alpha: tp1, ls: 6 });
+  const tp2 = easeOut(seg(rel, 0.75, 1.2));
+  if (tp2 > 0) text('两秒钟，记完一笔', W / 2, 826 + (1 - tp2) * 30, { size: 44, color: COL.sub, alpha: tp2 });
+
+  const lines = ['免费 · 无广告 · 无注册', '数据只存在你自己的手机里', '不用下载，浏览器打开即用'];
+  lines.forEach((s, i) => {
+    const lp = easeOut(seg(rel, 1.25 + i * 0.3, 1.7 + i * 0.3));
+    if (lp > 0) text(s, W / 2, 990 + i * 86 + (1 - lp) * 26, { size: 40, color: 'rgba(23,32,42,0.86)', alpha: lp });
+  });
+
+  // 二维码 / 网址
+  const qp = seg(rel, 2.5, 3.05);
+  if (qp > 0) {
+    const s = 0.92 + 0.08 * easeOutBack(qp);
+    ctx.save();
+    ctx.globalAlpha = easeOut(qp);
+    ctx.translate(W / 2, 1480);
+    ctx.scale(s, s);
+    if (qrOk) {
+      ctx.shadowColor = 'rgba(10,16,24,0.14)';
+      ctx.shadowBlur = 50;
+      ctx.shadowOffsetY = 14;
+      rr(-190, -190, 380, 380, 44);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.drawImage(qrImg, -150, -150, 300, 300);
+      text('扫码打开，加到主屏幕', 0, 262, { size: 34, color: COL.sub });
+      text('allenliu2046.github.io/jizhang', 0, 330, { size: 37, weight: 650, color: COL.deep });
+    } else {
+      text('浏览器打开', 0, -60, { size: 40, color: COL.sub });
+      text('allenliu2046.github.io/jizhang', 0, 20, { size: 48, weight: 700, color: COL.deep });
+      text('加到主屏幕，就是一个 App', 0, 96, { size: 36, color: COL.sub });
+    }
+    ctx.restore();
+  }
+}
+
+/* ================= 总调度 ================= */
+function drawFrame(t) {
+  ctx.save();
+  ctx.textBaseline = 'alphabetic';
+  if (t < 7.5) scenePain(t);
+  else if (t < 10) scenePivot(t);
+  else if (t < 18.5) sceneDemo(t);
+  else if (t < 25) sceneStats(t);
+  else sceneEnd(t);
+  ctx.restore();
+}
+
+/* ================= 音效（OfflineAudioContext 合成） ================= */
+async function renderAudio() {
+  const sr = 44100;
+  const ac = new OfflineAudioContext(2, Math.ceil(DUR * sr), sr);
+  const master = ac.createGain();
+  master.gain.value = 0.9;
+  master.connect(ac.destination);
+  const tone = (t0, freq, dur, gain) => {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(master);
+    o.start(t0); o.stop(t0 + dur + 0.05);
+  };
+  const noise = (t0, dur, gain, f0, f1) => {
+    const len = Math.ceil(dur * sr), buf = ac.createBuffer(1, len, sr);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1;
+    bp.frequency.setValueAtTime(f0, t0);
+    bp.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+    const g = ac.createGain(); g.gain.value = gain;
+    src.connect(bp); bp.connect(g); g.connect(master);
+    src.start(t0);
+  };
+  for (const rt of rowTimes) noise(rt, 0.045, 0.05, 800, 500);       // 表单堆叠的密集嗒声
+  noise(7.5, 0.5, 0.08, 300, 1400);                                   // 转场
+  noise(18.55, 0.45, 0.07, 350, 1200);
+  noise(25.05, 0.5, 0.06, 300, 1000);
+  for (const tp of TAPS) if (tp.key !== 'go') { tone(10 + tp.at, 1650, 0.06, 0.16); tone(10 + tp.at, 3300, 0.04, 0.05); }
+  tone(13.3, 660, 0.5, 0.16);                                         // 记一笔 · 叮
+  tone(13.36, 990, 0.7, 0.14);
+  tone(25.7, 523.25, 1.6, 0.07);                                      // 结尾和弦
+  tone(25.74, 659.25, 1.6, 0.06);
+  tone(25.78, 783.99, 1.8, 0.06);
+  const rendered = await ac.startRendering();
+  await fetch('/audio', { method: 'POST', body: encodeWav(rendered) });
+}
+
+function encodeWav(buf) {
+  const n = buf.length, ch = 2, sr = buf.sampleRate;
+  const bytes = 44 + n * ch * 2;
+  const ab = new ArrayBuffer(bytes), v = new DataView(ab);
+  const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  wstr(0, 'RIFF'); v.setUint32(4, bytes - 8, true); wstr(8, 'WAVE'); wstr(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, ch, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * ch * 2, true); v.setUint16(32, ch * 2, true); v.setUint16(34, 16, true);
+  wstr(36, 'data'); v.setUint32(40, n * ch * 2, true);
+  const L = buf.getChannelData(0), R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
+  let o = 44;
+  for (let i = 0; i < n; i++) {
+    v.setInt16(o, Math.max(-1, Math.min(1, L[i])) * 0x7FFF, true); o += 2;
+    v.setInt16(o, Math.max(-1, Math.min(1, R[i])) * 0x7FFF, true); o += 2;
+  }
+  return ab;
+}
+
+/* ================= 导出 ================= */
+let exporting = false;
+window.startExport = async function () {
+  if (exporting) return;
+  exporting = true;
+  console.log('export: start');
+  await fetch('/reset', { method: 'POST' });
+  for (let i = 0; i < TOTAL; i++) {
+    drawFrame(i / FPS);
+    const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+    await fetch('/frame/' + String(i).padStart(4, '0'), { method: 'POST', body: blob });
+    if (i % 60 === 0) { hud.textContent = '导出中 ' + i + ' / ' + TOTAL; console.log('export: frame ' + i); }
+  }
+  hud.textContent = '合成音效…';
+  try { await renderAudio(); } catch (e) { console.warn('audio skipped: ' + e); }
+  await fetch('/done', { method: 'POST' });
+  hud.textContent = '导出完成 ✓';
+  console.log('export: done');
+  exporting = false;
+};
+
+window.seek = function (t) {
+  drawFrame(t);
+  hud.textContent = 't = ' + t.toFixed(2) + ' s　（?t=秒 预览单帧 / ?export 导出全片）';
+};
+
+// 注意：不能用 img.decode()——本机预览浏览器里它的 Promise 可能永不落定
+function waitImg(img) {
+  return new Promise(resolve => {
+    const ok = () => resolve(img.naturalWidth > 0);
+    if (img.complete) return ok();
+    img.onload = ok;
+    img.onerror = () => resolve(false);
+  });
+}
+
+(async function boot() {
+  iconOk = await waitImg(iconImg);
+  qrOk = await waitImg(qrImg);
+  const q = new URLSearchParams(location.search);
+  if (q.has('export')) startExport();
+  else seek(parseFloat(q.get('t') || '0'));
+})();
+</script>
+</body>
+</html>
