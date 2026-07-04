@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>记账 · 小红书卡片生成器</title>
+  <style>
+    body { margin: 0; background: #22262B; display: flex; flex-direction: column; align-items: center; font-family: -apple-system, "PingFang SC", sans-serif; }
+    #hud { color: #cfd6dd; font-size: 14px; padding: 14px; }
+    canvas { display: none; }
+  </style>
+</head>
+<body>
+  <div id="hud">绘制中…</div>
+  <canvas id="cv" width="1080" height="1440"></canvas>
+<script>
+'use strict';
+
+/* 小红书 3:4 卡片组（1080×1440）：每张一个主题，非长图切片 */
+const W = 1080, H = 1440;
+const cvEl = document.getElementById('cv');
+let ctx = cvEl.getContext('2d');
+const hud = document.getElementById('hud');
+
+const COL = {
+  bg: '#F5F6F8', card: '#FFFFFF', text: '#17202A', sub: '#66707D',
+  line: 'rgba(23,32,42,0.10)',
+  accent: '#10B981', deep: '#059669', soft: 'rgba(16,185,129,0.10)',
+  dark: '#0C1117', white: '#F5F7FA', grey: '#97A1AE',
+  glow: '#34D399', barMuted: '#D7DCE3'
+};
+const FONT = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif';
+const font = (w, s) => w + ' ' + s + 'px ' + FONT;
+
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function measure(str, weight, size) { ctx.font = font(weight || 400, size || 40); return ctx.measureText(str).width; }
+
+function text(str, x, y, o = {}) {
+  ctx.save();
+  ctx.globalAlpha *= (o.alpha == null ? 1 : o.alpha);
+  ctx.fillStyle = o.color || COL.text;
+  ctx.font = font(o.weight || 400, o.size || 40);
+  ctx.textAlign = o.align || 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.letterSpacing = (o.ls || 0) + 'px';
+  ctx.fillText(str, x, y);
+  ctx.letterSpacing = '0px';
+  ctx.restore();
+}
+
+function segLine(segs, cx, y, o = {}) {
+  const bw = o.weight || 400, bs = o.size || 40;
+  let total = 0;
+  for (const g of segs) total += measure(g.t, g.weight || bw, g.size || bs);
+  let x = cx - total / 2;
+  ctx.save();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  for (const g of segs) {
+    ctx.font = font(g.weight || bw, g.size || bs);
+    ctx.fillStyle = g.color || o.color || COL.text;
+    ctx.fillText(g.t, x, y);
+    x += ctx.measureText(g.t).width;
+  }
+  ctx.restore();
+}
+
+const PUNCT = '，。：；！？、」』）·——…';
+function wrap(str, maxW, weight, size) {
+  ctx.font = font(weight || 400, size || 34);
+  const lines = [];
+  let cur = '';
+  for (const ch of str) {
+    if (ctx.measureText(cur + ch).width > maxW && cur) {
+      if (PUNCT.includes(ch)) { lines.push(cur + ch); cur = ''; continue; }
+      lines.push(cur); cur = ch;
+    } else cur += ch;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+function para(str, cx, y, maxW, o = {}) {
+  const size = o.size || 34, lh = o.lh || size * 1.8;
+  for (const ln of wrap(str, maxW, o.weight || 400, size)) { text(ln, cx, y, o); y += lh; }
+  return y;
+}
+
+/* ============ 应用界面重绘（与长图同一套） ============ */
+const PH = { x: 125, y: 110, w: 830, h: 1700, r: 112 };
+const SC = { x: 143, y: 128, w: 794, h: 1664, r: 94 };
+const TABS_H = 116, COMMIT_H = 126, KEY_H = 120, KEY_GAP = 20, PAD_X = 28;
+const COMMIT_Y = SC.y + SC.h - TABS_H - 24 - COMMIT_H;
+const GRID_TOP = COMMIT_Y - 4 * (KEY_H + KEY_GAP);
+const KEY_W = (SC.w - PAD_X * 2 - KEY_GAP * 2) / 3;
+const KEY_POS = { '1': [0, 0], '2': [0, 1], '3': [0, 2], '4': [1, 0], '5': [1, 1], '6': [1, 2], '7': [2, 0], '8': [2, 1], '9': [2, 2], '.': [3, 0], '0': [3, 1], 'del': [3, 2] };
+const PW = 1080, PHH = 1920;
+
+function keyRect(k) {
+  const [r, c] = KEY_POS[k];
+  return { x: SC.x + PAD_X + c * (KEY_W + KEY_GAP), y: GRID_TOP + r * (KEY_H + KEY_GAP), w: KEY_W, h: KEY_H };
+}
+
+function drawPhoneShell() {
+  ctx.save();
+  ctx.shadowColor = 'rgba(10,20,30,0.28)';
+  ctx.shadowBlur = 60;
+  ctx.shadowOffsetY = 26;
+  rr(PH.x, PH.y, PH.w, PH.h, PH.r);
+  ctx.fillStyle = '#101215'; ctx.fill();
+  ctx.restore();
+  rr(SC.x, SC.y, SC.w, SC.h, SC.r);
+  ctx.fillStyle = COL.bg; ctx.fill();
+}
+
+function drawNotch() {
+  rr(PW / 2 - 88, SC.y + 16, 176, 36, 18);
+  ctx.fillStyle = 'rgba(11,13,16,0.95)'; ctx.fill();
+}
+
+function drawTabbar(active) {
+  const ty = SC.y + SC.h - TABS_H;
+  ctx.fillStyle = COL.line;
+  ctx.fillRect(SC.x, ty, SC.w, 2);
+  ['记账', '统计', '明细'].forEach((s, i) => {
+    const x = SC.x + SC.w * (1 + 2 * i) / 6;
+    text(s, x, ty + 72, { size: 30, weight: i === active ? 650 : 400, color: i === active ? COL.deep : '#8A94A3' });
+  });
+}
+
+function drawEntryScreen(st) {
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(SC.x, SC.y, SC.w, SC.h);
+  segLine([
+    { t: '今日已花 ', color: '#8A94A3', size: 34 },
+    { t: st.headMoney, color: COL.text, size: 37, weight: 650 },
+    { t: ' · ' + st.headCount + ' 笔', color: '#8A94A3', size: 34 }
+  ], PW / 2, SC.y + 170, {});
+  const dim = st.amountStr === '0';
+  ctx.save();
+  ctx.globalAlpha = dim ? 0.5 : 1;
+  segLine([
+    { t: '¥ ', color: '#8A94A3', size: 64, weight: 300 },
+    { t: st.amountStr, color: dim ? '#8A94A3' : COL.text, size: 136, weight: 300 }
+  ], PW / 2, SC.y + 560, {});
+  ctx.restore();
+  for (const k of Object.keys(KEY_POS)) {
+    const kr = keyRect(k);
+    rr(kr.x, kr.y, kr.w, kr.h, 30);
+    ctx.fillStyle = COL.card;
+    ctx.fill();
+    if (k === 'del') text('⌫', kr.x + kr.w / 2, kr.y + kr.h / 2 + 16, { size: 44, color: '#8A94A3' });
+    else text(k, kr.x + kr.w / 2, kr.y + kr.h / 2 + 19, { size: 54, weight: 500 });
+  }
+  rr(SC.x + PAD_X, COMMIT_Y, SC.w - PAD_X * 2, COMMIT_H, 30);
+  ctx.fillStyle = COL.deep; ctx.fill();
+  text('记 一 笔', PW / 2, COMMIT_Y + COMMIT_H / 2 + 16, { size: 44, weight: 600, color: '#fff', ls: 6 });
+  drawTabbar(0);
+}
+
+function drawStatsScreen() {
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(SC.x, SC.y, SC.w, SC.h);
+  text('统计', SC.x + 40, SC.y + 160, { size: 60, weight: 700, align: 'left' });
+  const cards = [
+    { t: '今日', v: '¥63.5', n: '4 笔' },
+    { t: '本周', v: '¥328', n: '18 笔' },
+    { t: '本月', v: '¥1,276', n: '67 笔' }
+  ];
+  const cw = (SC.w - 72 - 32) / 3;
+  cards.forEach((c, i) => {
+    const x = SC.x + 36 + i * (cw + 16), y = SC.y + 210;
+    rr(x, y, cw, 210, 28); ctx.fillStyle = COL.card; ctx.fill();
+    text(c.t, x + 28, y + 66, { size: 28, color: '#8A94A3', align: 'left' });
+    text(c.v, x + 28, y + 130, { size: 40, weight: 700, align: 'left' });
+    text(c.n, x + 28, y + 172, { size: 24, color: '#8A94A3', align: 'left' });
+  });
+  const b1y = SC.y + 456;
+  rr(SC.x + 36, b1y, SC.w - 72, 520, 28); ctx.fillStyle = COL.card; ctx.fill();
+  text('近 7 天', SC.x + 72, b1y + 64, { size: 30, weight: 600, color: '#8A94A3', align: 'left' });
+  const hts = [0.36, 0.60, 0.30, 0.76, 0.50, 0.86, 0.44];
+  const vals = [45, 74, 36, 93, 62, 105, 64];
+  const labs = ['六', '日', '一', '二', '三', '四', '今'];
+  const innerW = SC.w - 144, slotW = innerW / 7, maxH = 290, baseY = b1y + 430;
+  for (let i = 0; i < 7; i++) {
+    const bh = Math.max(6, hts[i] * maxH);
+    const bx = SC.x + 72 + i * slotW + (slotW - 54) / 2;
+    rr(bx, baseY - bh, 54, bh, [12, 12, 5, 5]);
+    ctx.fillStyle = i === 6 ? COL.accent : COL.barMuted;
+    ctx.fill();
+    text(String(vals[i]), bx + 27, baseY - bh - 16, { size: 24, color: '#8A94A3' });
+    text(labs[i], bx + 27, baseY + 46, { size: 26, weight: i === 6 ? 650 : 400, color: i === 6 ? COL.deep : '#8A94A3' });
+  }
+  const b2y = b1y + 544;
+  rr(SC.x + 36, b2y, SC.w - 72, 400, 28); ctx.fillStyle = COL.card; ctx.fill();
+  text('月度汇总', SC.x + 72, b2y + 64, { size: 30, weight: 600, color: '#8A94A3', align: 'left' });
+  const months = [
+    ['2026年7月', '¥1,276', '67 笔', true],
+    ['2026年6月', '¥2,410', '118 笔', false],
+    ['2026年5月', '¥2,183', '105 笔', false]
+  ];
+  months.forEach((m, i) => {
+    const my = b2y + 100 + i * 100;
+    if (i > 0) { ctx.fillStyle = COL.line; ctx.fillRect(SC.x + 72, my - 4, SC.w - 144, 2); }
+    text(m[0], SC.x + 72, my + 62, { size: 32, align: 'left' });
+    if (m[3]) {
+      const nx = SC.x + 72 + measure(m[0], 400, 32) + 16;
+      rr(nx, my + 30, 92, 44, 14); ctx.fillStyle = COL.soft; ctx.fill();
+      text('本月', nx + 46, my + 62, { size: 24, color: COL.deep });
+    }
+    ctx.save();
+    ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+    ctx.font = font(400, 24); ctx.fillStyle = '#8A94A3';
+    const nw = ctx.measureText(' · ' + m[2]).width;
+    ctx.fillText(' · ' + m[2], SC.x + SC.w - 72, my + 62);
+    ctx.font = font(700, 34); ctx.fillStyle = COL.text;
+    ctx.fillText(m[1], SC.x + SC.w - 72 - nw, my + 62);
+    ctx.restore();
+  });
+  drawTabbar(1);
+}
+
+function phoneShot(kind) {
+  const c = document.createElement('canvas');
+  c.width = PW; c.height = PHH;
+  const old = ctx;
+  ctx = c.getContext('2d');
+  drawPhoneShell();
+  ctx.save();
+  rr(SC.x, SC.y, SC.w, SC.h, SC.r); ctx.clip();
+  if (kind === 'entry') drawEntryScreen({ headMoney: '¥38', headCount: 3, amountStr: '25.5' });
+  else drawStatsScreen();
+  ctx.restore();
+  drawNotch();
+  ctx = old;
+  return c;
+}
+
+/* ============ 小图标 ============ */
+function iconStopwatch(cx, cy) {
+  ctx.strokeStyle = COL.deep; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(cx, cy + 3, 22, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy + 3); ctx.lineTo(cx + 1, cy - 12); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy + 3); ctx.lineTo(cx + 11, cy + 8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx - 7, cy - 25); ctx.lineTo(cx + 7, cy - 25); ctx.stroke();
+}
+function iconLoopX(cx, cy) {
+  ctx.strokeStyle = COL.deep; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(cx, cy, 22, -Math.PI * 0.85, Math.PI * 0.6); ctx.stroke();
+  const ax = cx + 22 * Math.cos(Math.PI * 0.6), ay = cy + 22 * Math.sin(Math.PI * 0.6);
+  ctx.beginPath(); ctx.moveTo(ax - 10, ay - 2); ctx.lineTo(ax, ay); ctx.lineTo(ax + 2, ay - 11); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx - 8, cy - 8); ctx.lineTo(cx + 8, cy + 8); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx + 8, cy - 8); ctx.lineTo(cx - 8, cy + 8); ctx.stroke();
+}
+function iconSplit(cx, cy) {
+  ctx.lineWidth = 5; ctx.lineCap = 'round';
+  rr(cx - 26, cy - 14, 22, 22, 6); ctx.fillStyle = COL.deep; ctx.fill();
+  rr(cx + 4, cy - 8, 22, 22, 6); ctx.strokeStyle = COL.deep; ctx.stroke();
+}
+function iconMinus(cx, cy) {
+  ctx.strokeStyle = COL.deep; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(cx, cy, 22, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx - 11, cy); ctx.lineTo(cx + 11, cy); ctx.stroke();
+}
+function iconCheck(cx, cy, r) {
+  ctx.fillStyle = COL.accent;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 4.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx - r * 0.42, cy + r * 0.05);
+  ctx.lineTo(cx - r * 0.1, cy + r * 0.38);
+  ctx.lineTo(cx + r * 0.45, cy - r * 0.3);
+  ctx.stroke();
+}
+
+/* ============ 素材 ============ */
+const iconImg = new Image(); iconImg.src = '/icons/icon-192.png';
+const qrImg = new Image(); qrImg.src = '/tools/promo/qr.png';
+let iconOk = false, qrOk = false;
+function waitImg(img) {
+  return new Promise(resolve => {
+    const ok = () => resolve(img.naturalWidth > 0);
+    if (img.complete) return ok();
+    img.onload = ok;
+    img.onerror = () => resolve(false);
+  });
+}
+
+/* ============ 公共元素 ============ */
+function brandFooter(dark) {
+  const y = 1372;
+  const label = ' 记账 · 两秒钟，记完一笔';
+  const tw = measure(label, 500, 28);
+  const total = 40 + tw;
+  const x0 = W / 2 - total / 2;
+  if (iconOk) {
+    ctx.save();
+    rr(x0, y - 28, 40, 40, 10); ctx.clip();
+    ctx.drawImage(iconImg, x0, y - 28, 40, 40);
+    ctx.restore();
+  }
+  text(label, x0 + 40, y, { size: 28, weight: 500, color: dark ? COL.grey : '#8A94A3', align: 'left' });
+}
+
+function kicker(label, y) {
+  text(label, W / 2, y, { size: 30, weight: 650, color: COL.deep, ls: 4 });
+}
+
+function lightBg() { ctx.fillStyle = COL.bg; ctx.fillRect(0, 0, W, H); }
+function darkBg() {
+  ctx.fillStyle = COL.dark; ctx.fillRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(W / 2, 300, 0, W / 2, 300, 620);
+  g.addColorStop(0, 'rgba(16,185,129,0.13)');
+  g.addColorStop(1, 'rgba(16,185,129,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+
+function appIcon(cx, cy, size) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.shadowColor = 'rgba(5,150,105,0.4)';
+  ctx.shadowBlur = 60;
+  ctx.shadowOffsetY = 12;
+  rr(-size / 2, -size / 2, size, size, size * 0.23);
+  ctx.fillStyle = '#0FA57B'; ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (iconOk) {
+    ctx.save();
+    rr(-size / 2, -size / 2, size, size, size * 0.23); ctx.clip();
+    ctx.drawImage(iconImg, -size / 2, -size / 2, size, size);
+    ctx.restore();
+  } else text('¥', 0, size * 0.18, { size: size * 0.56, weight: 700, color: '#fff' });
+  ctx.restore();
+}
+
+/* ============ 卡片 ============ */
+// 1 封面
+function card1() {
+  darkBg();
+  appIcon(W / 2, 235, 150);
+  text('记账', W / 2, 425, { size: 92, weight: 700, color: COL.white, ls: 10 });
+  text('两秒钟，记完一笔。', W / 2, 502, { size: 44, color: COL.grey, ls: 2 });
+  const p = phoneShot('entry');
+  const pw = 540, ph = pw * PHH / PW;
+  ctx.drawImage(p, W / 2 - pw / 2, 575, pw, ph);
+}
+
+// 2 痛点
+function card2() {
+  lightBg();
+  kicker('为什么做这个应用', 210);
+  text('记账最大的敌人，', W / 2, 320, { size: 66, weight: 700 });
+  segLine([{ t: '不是数学，是' }, { t: '放弃', color: '#E5484D', weight: 800 }, { t: '。' }], W / 2, 416, { size: 66, weight: 700 });
+  const steps = ['嫌麻烦', '「回头再记」', '忘了'];
+  const bw = [212, 292, 172];
+  const gap = 66;
+  let bx = W / 2 - (bw.reduce((a, b) => a + b, 0) + gap * 2) / 2;
+  steps.forEach((s, i) => {
+    rr(bx, 530, bw[i], 100, 24);
+    ctx.fillStyle = '#ECEEF1'; ctx.fill();
+    text(s, bx + bw[i] / 2, 592, { size: 34, weight: 550, color: '#4A5560' });
+    if (i < 2) text('→', bx + bw[i] + gap / 2, 590, { size: 40, color: '#A6AEB8' });
+    bx += bw[i] + gap;
+  });
+  para('付钱那一刻正忙，软件却要你选账户、挑分类、写备注。嫌麻烦，想着回头再记——然后就忘了。', W / 2, 760, 860, { size: 36, color: COL.sub });
+  para('回忆是要消耗精力的。靠回忆补记，漏掉的恰恰是最该被看见的小额高频消费。又累又不准，几天之后，人自然就放弃了。', W / 2, 950, 860, { size: 36, color: COL.sub });
+  brandFooter(false);
+}
+
+// 3 主张
+function card3() {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#E7F6EF');
+  g.addColorStop(1, '#D5F0E3');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  text('所以这个应用', W / 2, 500, { size: 44, color: '#4E6E5F' });
+  text('把宝全押在一件事上——', W / 2, 572, { size: 44, color: '#4E6E5F' });
+  text('让「记下来」', W / 2, 730, { size: 84, weight: 700, color: '#123B2C' });
+  segLine([{ t: '便宜到' }, { t: '无法拒绝', color: COL.deep, weight: 800 }, { t: '。' }], W / 2, 850, { size: 84, weight: 700, color: '#123B2C' });
+  text('打开就是键盘 · 按下金额 · 记一笔', W / 2, 1010, { size: 36, color: '#4E6E5F', ls: 2 });
+  brandFooter(false);
+}
+
+// 4/5 界面展示
+function screenCard(kind, title, sub) {
+  lightBg();
+  text(title, W / 2, 240, { size: 60, weight: 700 });
+  text(sub, W / 2, 316, { size: 36, color: COL.sub });
+  const p = phoneShot(kind);
+  const pw = 540, ph = pw * PHH / PW;
+  ctx.drawImage(p, W / 2 - pw / 2, 350, pw, ph);
+  brandFooter(false);
+}
+function card4() { screenCard('entry', '打开，就是数字键盘。', '按下金额，点「记一笔」——两秒完成'); }
+function card5() { screenCard('stats', '花在哪，清清楚楚。', '今日 / 本周 / 本月 · 近 7 天 · 月度汇总'); }
+
+// 6/7 设计理念
+function philoCard(no, items) {
+  lightBg();
+  kicker('设计理念 ' + no, 210);
+  text('简单，是设计出来的。', W / 2, 316, { size: 58, weight: 700 });
+  let cy = 420;
+  const cardX = 80, cardW = W - 160, padIn = 48, bodyW = cardW - padIn * 2 - 112;
+  items.forEach(it => {
+    const lines = wrap(it.body, bodyW, 400, 34);
+    const chh = 60 + 56 + 24 + lines.length * 58 + 44;
+    ctx.save();
+    ctx.shadowColor = 'rgba(10,20,30,0.06)';
+    ctx.shadowBlur = 24;
+    ctx.shadowOffsetY = 8;
+    rr(cardX, cy, cardW, chh, 30);
+    ctx.fillStyle = COL.card; ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = COL.soft;
+    ctx.beginPath(); ctx.arc(cardX + padIn + 44, cy + 60 + 28, 44, 0, Math.PI * 2); ctx.fill();
+    it.icon(cardX + padIn + 44, cy + 60 + 28);
+    text(it.t, cardX + padIn + 112, cy + 60 + 42, { size: 42, weight: 700, align: 'left' });
+    let ty = cy + 60 + 56 + 50;
+    for (const ln of lines) {
+      text(ln, cardX + padIn + 112, ty, { size: 34, color: COL.sub, align: 'left' });
+      ty += 58;
+    }
+    cy += chh + 30;
+  });
+  brandFooter(false);
+}
+function card6() {
+  philoCard('①', [
+    { icon: iconStopwatch, t: '两秒钟法则', body: '动机每天都在波动，靠不住。唯一稳定的办法是把事情变容易——每省一步，坚持下来的概率就大一分。' },
+    { icon: iconLoopX, t: '「回头再记」是个骗局', body: '「记得稍后去做」是人类记忆里最不可靠的功能。与其对抗天性，不如趁记忆还热着，两秒记完。' }
+  ]);
+}
+function card7() {
+  philoCard('②', [
+    { icon: iconSplit, t: '捕捉与整理，分开发生', body: '付钱那一刻只记一个数字。备注分类想补再补，永远不补也没关系——统计照样清清楚楚。' },
+    { icon: iconMinus, t: '没有的功能，是故意没有的', body: '没有预算提醒、账户体系、云同步。每个功能都要过审判：会不会拖慢那两秒？会，就不做。' }
+  ]);
+}
+
+// 8 功能 + 诚实提醒
+function card8() {
+  lightBg();
+  kicker('功能一览', 200);
+  text('小，但什么都不缺。', W / 2, 306, { size: 58, weight: 700 });
+  const items = [
+    '今日 / 本周 / 本月，三张汇总卡片',
+    '近 7 天柱状图 + 月度汇总回看',
+    '本月分类占比（补过分类后出现）',
+    '明细按天分组：补备注、改金额、删除',
+    'JSON 一键导出 / 导入，换手机不丢账'
+  ];
+  let cy = 396;
+  const bx = 140;
+  items.forEach(s => {
+    iconCheck(bx + 22, cy + 20, 22);
+    text(s, bx + 72, cy + 34, { size: 36, align: 'left', color: '#2A3540' });
+    cy += 86;
+  });
+  cy += 40;
+  const noteX = 80, noteW = W - 160;
+  const body = '零摩擦解决「嫌麻烦」，解决不了「忘了打开」。头两三周，请把「付完钱」和「顺手记」绑在一起——反射弧焊牢后，它就不再消耗你的意志力。';
+  const lines = wrap(body, noteW - 96, 400, 33);
+  const noteH = 66 + 48 + lines.length * 56 + 44;
+  rr(noteX, cy, noteW, noteH, 26);
+  ctx.fillStyle = COL.soft; ctx.fill();
+  text('一个诚实的提醒', noteX + 48, cy + 78, { size: 38, weight: 700, color: COL.deep, align: 'left' });
+  let ty = cy + 78 + 70;
+  for (const ln of lines) {
+    text(ln, noteX + 48, ty, { size: 33, color: '#3D584C', align: 'left' });
+    ty += 56;
+  }
+  brandFooter(false);
+}
+
+// 9/10 安装卡（noqr = 小红书版，qr = 微信版）
+function installCard(withQr) {
+  darkBg();
+  appIcon(W / 2, 220, 130);
+  text('免费 · 无广告 · 无注册', W / 2, 390, { size: 38, color: COL.grey });
+  text('现在就试试', W / 2, 490, { size: 64, weight: 700, color: COL.white, ls: 4 });
+  const steps = [
+    ['1', 'iPhone 用 Safari、安卓用 Chrome 打开网址'],
+    ['2', '点分享（或菜单）→「添加到主屏幕」'],
+    ['3', '以后从主屏幕图标打开，就是一个 App']
+  ];
+  let cy = 600;
+  steps.forEach(([n, s]) => {
+    const total = 56 + 20 + measure(s, 400, 34);
+    const sx = W / 2 - total / 2;
+    ctx.fillStyle = 'rgba(52,211,153,0.14)';
+    ctx.beginPath(); ctx.arc(sx + 28, cy - 12, 28, 0, Math.PI * 2); ctx.fill();
+    text(n, sx + 28, cy, { size: 30, weight: 700, color: COL.glow });
+    text(s, sx + 76, cy, { size: 34, color: '#B9C2CC', align: 'left' });
+    cy += 86;
+  });
+  if (withQr && qrOk) {
+    rr(W / 2 - 150, 920, 300, 300, 36);
+    ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.drawImage(qrImg, W / 2 - 120, 950, 240, 240);
+    text('扫码直达', W / 2, 1282, { size: 30, color: COL.grey });
+  } else {
+    rr(W / 2 - 400, 950, 800, 130, 30);
+    ctx.fillStyle = 'rgba(52,211,153,0.10)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(52,211,153,0.35)'; ctx.lineWidth = 2;
+    rr(W / 2 - 399, 951, 798, 128, 29); ctx.stroke();
+    text('网址见评论区 / 主页简介', W / 2, 1032, { size: 40, weight: 600, color: COL.glow });
+    text('数据只存在你自己的手机里 · 没有后台服务器', W / 2, 1170, { size: 30, color: '#7C8794' });
+  }
+  brandFooter(true);
+}
+
+/* ============ 导出 ============ */
+const CARDS = [
+  ['9001', card1], ['9002', card2], ['9003', card3], ['9004', card4], ['9005', card5],
+  ['9006', card6], ['9007', card7], ['9008', card8],
+  ['9009', () => installCard(false)], ['9010', () => installCard(true)]
+];
+
+(async function main() {
+  iconOk = await waitImg(iconImg);
+  qrOk = await waitImg(qrImg);
+  for (const [id, fn] of CARDS) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.textBaseline = 'alphabetic';
+    fn();
+    const blob = await new Promise(r => cvEl.toBlob(r, 'image/png'));
+    await fetch('/frame/' + id, { method: 'POST', body: blob });
+  }
+  hud.textContent = '10 张卡片已导出 ✓（frames/f9001–f9010.png）';
+  console.log('cards done');
+})();
+</script>
+</body>
+</html>
