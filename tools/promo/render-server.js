@@ -20,6 +20,7 @@ const MIME = {
   '.webmanifest': 'application/manifest+json',
   '.json': 'application/json',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
   '.svg': 'image/svg+xml'
 };
 
