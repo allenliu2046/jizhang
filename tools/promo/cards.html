@@ -275,7 +275,8 @@ function iconCheck(cx, cy, r) {
 /* ============ 素材 ============ */
 const iconImg = new Image(); iconImg.src = '/icons/icon-192.png';
 const qrImg = new Image(); qrImg.src = '/tools/promo/qr.png';
-let iconOk = false, qrOk = false;
+const zsImg = new Image(); zsImg.src = '/zanshang.jpg';
+let iconOk = false, qrOk = false, zsOk = false;
 function waitImg(img) {
   return new Promise(resolve => {
     const ok = () => resolve(img.naturalWidth > 0);
@@ -509,16 +510,39 @@ function installCard(withQr) {
   brandFooter(true);
 }
 
+// 11 赞赏码（朋友圈用）
+function donateCard() {
+  darkBg();
+  appIcon(W / 2, 200, 120);
+  text('请作者喝杯咖啡', W / 2, 402, { size: 66, weight: 700, color: COL.white, ls: 4 });
+  text('这个应用一直免费、无广告，以后也是。', W / 2, 482, { size: 36, color: COL.grey });
+  const qs = 540, qy = 566;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = 50;
+  ctx.shadowOffsetY = 20;
+  rr(W / 2 - qs / 2, qy, qs, qs, 44);
+  ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.restore();
+  if (zsOk) ctx.drawImage(zsImg, W / 2 - 240, qy + 30, 480, 480);
+  else text('赞赏码', W / 2, qy + qs / 2 + 16, { size: 44, color: '#8A94A3' });
+  text('微信内长按识别，或打开微信扫一扫', W / 2, qy + qs + 74, { size: 32, color: '#7C8794' });
+  text('不赞赏，也一样好用。', W / 2, qy + qs + 168, { size: 42, weight: 600, color: COL.glow, ls: 2 });
+  brandFooter(true);
+}
+
 /* ============ 导出 ============ */
 const CARDS = [
   ['9001', card1], ['9002', card2], ['9003', card3], ['9004', card4], ['9005', card5],
   ['9006', card6], ['9007', card7], ['9008', card8],
-  ['9009', () => installCard(false)], ['9010', () => installCard(true)]
+  ['9009', () => installCard(false)], ['9010', () => installCard(true)],
+  ['9011', donateCard]
 ];
 
 (async function main() {
   iconOk = await waitImg(iconImg);
   qrOk = await waitImg(qrImg);
+  zsOk = await waitImg(zsImg);
   for (const [id, fn] of CARDS) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
@@ -527,7 +551,7 @@ const CARDS = [
     const blob = await new Promise(r => cvEl.toBlob(r, 'image/png'));
     await fetch('/frame/' + id, { method: 'POST', body: blob });
   }
-  hud.textContent = '10 张卡片已导出 ✓（frames/f9001–f9010.png）';
+  hud.textContent = '11 张卡片已导出 ✓（frames/f9001–f9011.png）';
   console.log('cards done');
 })();
 </script>
