@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <title>记账 · 宣传视频渲染器</title>
   <style>
-    body { margin: 0; background: #22262B; display: flex; flex-direction: column; align-items: center; font-family: -apple-system, "PingFang SC", sans-serif; }
-    canvas { width: 405px; height: 720px; margin-top: 12px; box-shadow: 0 6px 30px rgba(0, 0, 0, 0.5); }
+    body { margin: 0; background: #17191D; display: flex; flex-direction: column; align-items: center; font-family: -apple-system, "PingFang SC", sans-serif; }
+    canvas { width: 405px; height: 720px; margin-top: 12px; box-shadow: 0 6px 30px rgba(0, 0, 0, 0.6); }
     #hud { color: #cfd6dd; font-size: 13px; padding: 10px 0; }
   </style>
 </head>
@@ -15,18 +15,21 @@
 <script>
 'use strict';
 
-/* ================= 基础 ================= */
-const W = 1080, H = 1920, FPS = 30, DUR = 30.0, TOTAL = DUR * FPS;
+/* ================= 基础 =================
+   Apple 广告风：深空黑、巨大极简文案、光泽扫过、缓慢克制的运镜 */
+const W = 1080, H = 1920, FPS = 30, DUR = 34.0, TOTAL = DUR * FPS;
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 const hud = document.getElementById('hud');
 
 const COL = {
+  // 应用内屏幕仍是浅色主题（黑暗里发光的屏幕）
   bg: '#F5F6F8', card: '#FFFFFF', text: '#17202A', sub: '#8A94A3',
   accent: '#10B981', deep: '#059669', soft: 'rgba(16,185,129,0.12)',
-  bgD: '#0C1117', cardD: '#161D26', textD: '#ECF1F6', subD: '#97A1AE',
-  keyPress: '#E8EBEF', danger: '#FF6369', barMuted: '#D7DCE3',
-  stage: '#E9EDF1'
+  keyPress: '#E8EBEF', barMuted: '#D7DCE3',
+  // 片场
+  space: '#050607', white: '#F5F7FA', grey: '#9AA2AB', greyDim: '#6B7480',
+  glow: '#34D399'
 };
 const FONT = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif';
 const font = (w, s) => w + ' ' + s + 'px ' + FONT;
@@ -34,9 +37,9 @@ const font = (w, s) => w + ' ' + s + 'px ' + FONT;
 const clamp01 = x => Math.max(0, Math.min(1, x));
 const seg = (t, a, b) => clamp01((t - a) / (b - a));
 const lerp = (a, b, p) => a + (b - a) * p;
+const quint = p => 1 - Math.pow(1 - p, 5);
 const easeOut = p => 1 - Math.pow(1 - p, 3);
 const easeInOut = p => p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-const easeOutBack = p => { const c = 1.70158; return 1 + (c + 1) * Math.pow(p - 1, 3) + c * Math.pow(p - 1, 2); };
 
 function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
 
@@ -45,17 +48,18 @@ function measure(str, weight, size) { ctx.font = font(weight || 400, size || 40)
 function text(str, x, y, o = {}) {
   ctx.save();
   ctx.globalAlpha *= (o.alpha == null ? 1 : o.alpha);
-  ctx.fillStyle = o.color || COL.text;
+  ctx.fillStyle = o.color || COL.white;
   ctx.font = font(o.weight || 400, o.size || 40);
   ctx.textAlign = o.align || 'center';
   ctx.textBaseline = 'alphabetic';
   ctx.letterSpacing = (o.ls || 0) + 'px';
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.glowBlur || 46; }
   ctx.fillText(str, x, y);
   ctx.letterSpacing = '0px';
   ctx.restore();
 }
 
-// 一行内混排不同颜色/字号的文字，整体居中于 cx；返回各段位置
+// 一行内混排不同颜色/字号，整体居中；返回各段位置
 function segLine(segs, cx, y, o = {}) {
   const bw = o.weight || 400, bs = o.size || 40;
   let total = 0;
@@ -68,7 +72,8 @@ function segLine(segs, cx, y, o = {}) {
   ctx.textBaseline = 'alphabetic';
   for (const g of segs) {
     ctx.font = font(g.weight || bw, g.size || bs);
-    ctx.fillStyle = g.color || o.color || COL.text;
+    ctx.fillStyle = g.color || o.color || COL.white;
+    if (g.glow) { ctx.shadowColor = g.glow; ctx.shadowBlur = 50; } else { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; }
     const w = ctx.measureText(g.t).width;
     ctx.fillText(g.t, x, y);
     pos.push({ x, w });
@@ -78,100 +83,153 @@ function segLine(segs, cx, y, o = {}) {
   return pos;
 }
 
+// 大字上的光泽扫过（Apple 招牌）：离屏画字，再用移动的高光渐变叠在字形内
+const off = document.createElement('canvas');
+off.width = W; off.height = H;
+const octx = off.getContext('2d');
+function sweepText(str, x, y, o, sweepP) {
+  octx.clearRect(0, 0, W, H);
+  octx.font = font(o.weight || 600, o.size || 120);
+  octx.textAlign = 'center';
+  octx.textBaseline = 'alphabetic';
+  octx.letterSpacing = (o.ls || 0) + 'px';
+  octx.fillStyle = o.color || COL.white;
+  octx.fillText(str, x, y);
+  octx.letterSpacing = '0px';
+  if (sweepP != null && sweepP > 0 && sweepP < 1) {
+    const sw = W * 0.45, sx = lerp(-sw, W, sweepP);
+    const g = octx.createLinearGradient(sx, 0, sx + sw, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.85)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    octx.globalCompositeOperation = 'source-atop';
+    octx.fillStyle = g;
+    octx.fillRect(0, 0, W, H);
+    octx.globalCompositeOperation = 'source-over';
+  }
+  ctx.save();
+  ctx.globalAlpha *= (o.alpha == null ? 1 : o.alpha);
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = 60; }
+  ctx.drawImage(off, 0, 0);
+  ctx.restore();
+}
+
+function vignette(a) {
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.32, W / 2, H / 2, H * 0.72);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,' + a + ')');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
+// 深空底 + 缓慢游移的环境光斑
+function space(t) {
+  ctx.fillStyle = COL.space;
+  ctx.fillRect(0, 0, W, H);
+  const x1 = W * 0.32 + Math.sin(t * 0.12) * 70, y1 = H * 0.24 + Math.cos(t * 0.09) * 50;
+  let g = ctx.createRadialGradient(x1, y1, 0, x1, y1, 760);
+  g.addColorStop(0, 'rgba(16,185,129,0.085)');
+  g.addColorStop(1, 'rgba(16,185,129,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  const x2 = W * 0.74 + Math.cos(t * 0.08) * 60, y2 = H * 0.78 + Math.sin(t * 0.11) * 50;
+  g = ctx.createRadialGradient(x2, y2, 0, x2, y2, 700);
+  g.addColorStop(0, 'rgba(80,130,255,0.05)');
+  g.addColorStop(1, 'rgba(80,130,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
 /* ================= 素材 ================= */
 const iconImg = new Image(); iconImg.src = '/icons/icon-192.png';
 const qrImg = new Image(); qrImg.src = '/tools/promo/qr.png';
 let iconOk = false, qrOk = false;
 
-/* ================= 场景 1：痛点（0 – 7.5s） ================= */
-const ROWS = ['金额', '账户', '分类', '子分类', '标签', '成员', '商家', '门店', '币种', '报销状态', '优惠券', '项目', '时间', '地点', '备注', '上传小票'];
-const ROW_RIGHT = { '金额': '0.00', '时间': '2026-07-04 12:30', '备注': '点击输入…' };
-const rowTimes = [];
-{ let rt = 2.25, iv = 0.40; for (let i = 0; i < ROWS.length; i++) { rowTimes.push(rt); rt += iv; iv = Math.max(0.08, iv * 0.84); } }
-
-function scenePain(t) {
-  ctx.fillStyle = COL.bgD; ctx.fillRect(0, 0, W, H);
-
-  // 标题：先居中出现，表单来了之后移到顶部（画在表单下层，最终被表单“吞没”）
-  const a1 = easeOut(seg(t, 0.15, 0.85));
-  const a2 = easeOut(seg(t, 0.40, 1.10));
-  const m = easeInOut(seg(t, 1.75, 2.35));
-  const size = lerp(96, 62, m);
-  const cy = lerp(800, 190, m);
-  if (a1 > 0) text('记一笔账，', W / 2, cy + (1 - a1) * 50, { size, weight: 700, color: COL.textD, alpha: a1 });
-  if (a2 > 0) text('要填多少项？', W / 2, cy + size * 1.5 + (1 - a2) * 50, { size, weight: 700, color: COL.textD, alpha: a2 });
-
-  // 戏仿的复杂表单
-  const cardIn = easeOut(seg(t, 2.0, 2.6));
-  if (cardIn > 0) {
-    const shown = rowTimes.filter(rt => t >= rt).length;
-    const rowH = 104, padT = 36;
-    const contentH = padT + 44 + shown * rowH + 30;
-    const baseY = lerp(H + 40, 430, cardIn);
-    const over = Math.max(0, contentH - (H - 430 - 40));
-    const y0 = baseY - over; // 行数超出屏幕就往上顶：滚不完的表单
-    const amp = t < 5.2 ? lerp(0, 8, seg(t, 3.4, 5.0)) : 0;
-    ctx.save();
-    ctx.translate(Math.sin(t * 37) * amp, Math.cos(t * 29) * amp * 0.6);
-    rr(100, y0, 880, Math.max(contentH, 320), 36);
-    ctx.fillStyle = COL.cardD; ctx.fill();
-    text('添加一笔支出', 140, y0 + padT + 22, { size: 34, weight: 600, color: COL.subD, align: 'left' });
-    for (let i = 0; i < shown; i++) {
-      const p = easeOut(seg(t, rowTimes[i], rowTimes[i] + 0.22));
-      const ry = y0 + padT + 60 + i * rowH + (1 - p) * 26;
-      ctx.save();
-      ctx.globalAlpha = p;
-      ctx.fillStyle = 'rgba(236,241,246,0.07)';
-      ctx.fillRect(140, ry + rowH - 12, 800, 2);
-      text(ROWS[i], 140, ry + 60, { size: 40, color: COL.textD, align: 'left' });
-      if ([1, 2, 4, 9].includes(i)) text('*', 148 + measure(ROWS[i], 400, 40), ry + 60, { size: 40, weight: 700, color: COL.danger, align: 'left' });
-      text(ROW_RIGHT[ROWS[i]] || '请选择 ›', 940, ry + 58, { size: 34, color: COL.subD, align: 'right' });
-      ctx.restore();
-    }
-    ctx.restore();
+/* ================= 场景 1：字段词云（0 – 8s） ================= */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const WORDS = ['账户', '分类', '子分类', '标签', '成员', '商家', '门店', '币种', '报销', '优惠券', '项目', '时间', '地点', '备注', '小票', '预算', '周期', '汇率', '模板', '标签组'];
+const cloud = [];
+{
+  // 打乱的 4×5 网格 + 抖动：散布自然且不会整词重叠
+  const rnd = mulberry32(11);
+  const cells = [];
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 4; c++) cells.push([c, r]);
+  for (let i = cells.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [cells[i], cells[j]] = [cells[j], cells[i]];
   }
-
-  // 压暗 + punchline
-  const dim = 0.76 * seg(t, 5.2, 5.7);
-  if (dim > 0) { ctx.fillStyle = 'rgba(4,7,11,' + dim + ')'; ctx.fillRect(0, 0, W, H); }
-  const p1 = easeOut(seg(t, 5.45, 6.0));
-  if (p1 > 0) text('太麻烦，想着回头再记……', W / 2, 880 + (1 - p1) * 40, { size: 58, weight: 500, color: '#ECF1F6', alpha: p1 });
-  const p2 = easeOut(seg(t, 6.35, 6.9));
-  if (p2 > 0) {
-    ctx.save();
-    ctx.globalAlpha = p2;
-    segLine([
-      { t: '然后，就' }, { t: '忘了', color: COL.danger, weight: 800 }, { t: '。' }
-    ], W / 2, 1040 + (1 - p2) * 40, { size: 76, weight: 700, color: '#ECF1F6' });
-    ctx.restore();
+  let wt = 0.8, iv = 0.34;
+  for (let i = 0; i < WORDS.length; i++) {
+    const [c, r] = cells[i];
+    const base = 46 + rnd() * 46;
+    cloud.push({
+      w: WORDS[i], at: wt,
+      x: 200 + c * 226 + (rnd() - 0.5) * 100,
+      y: 320 + r * 258 + (rnd() - 0.5) * 130,
+      size: base * (WORDS[i].length <= 2 ? 1 : WORDS[i].length === 3 ? 0.8 : 0.68),
+      a: 0.3 + rnd() * 0.45,
+      rot: (rnd() - 0.5) * 0.1
+    });
+    wt += iv; iv = Math.max(0.12, iv * 0.92);
   }
 }
 
-/* ================= 场景 2：转折（7.5 – 10s） ================= */
-function scenePivot(t) {
-  const rel = t - 7.5;
-  ctx.fillStyle = '#080C10'; ctx.fillRect(0, 0, W, H);
-  const r = easeInOut(seg(rel, 0, 0.55)) * 1180;
-  if (r > 0) { ctx.fillStyle = COL.stage; ctx.beginPath(); ctx.arc(W / 2, H / 2, r, 0, Math.PI * 2); ctx.fill(); }
-  const p1 = easeOut(seg(rel, 0.55, 1.05));
-  if (p1 > 0) text('如果记一笔，', W / 2, 880 + (1 - p1) * 46, { size: 84, weight: 600, alpha: p1 });
-  const p2 = seg(rel, 0.8, 1.35);
-  if (p2 > 0) {
-    const s = 0.9 + 0.1 * easeOutBack(p2);
+function sceneCloud(t) {
+  ctx.fillStyle = COL.space;
+  ctx.fillRect(0, 0, W, H);
+  const zoom = 1 + 0.06 * seg(t, 0.8, 5.4);          // 缓慢推近，压迫感
+  const exit = seg(t, 5.35, 6.05);                     // 溃散
+  ctx.save();
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-W / 2, -H / 2);
+  if (exit > 0.02) ctx.filter = 'blur(' + (exit * 10).toFixed(1) + 'px)';
+  for (const c of cloud) {
+    const p = easeOut(seg(t, c.at, c.at + 0.35));
+    if (p <= 0) continue;
+    const drift = (t - c.at) * 9;
     ctx.save();
-    ctx.globalAlpha = clamp01(p2 * 1.6);
-    ctx.translate(W / 2, 1060);
-    ctx.scale(s, s);
-    const pos = segLine([
-      { t: '只要 ' }, { t: '两秒', color: COL.deep, weight: 800 }, { t: ' 呢？' }
-    ], 0, 0, { size: 104, weight: 700 });
-    const u = easeOut(seg(rel, 1.35, 1.7));
-    if (u > 0) { rr(pos[1].x, 26, pos[1].w * u, 14, 7); ctx.fillStyle = COL.accent; ctx.fill(); }
+    ctx.translate(c.x, c.y - drift);
+    ctx.rotate(c.rot);
+    ctx.scale(lerp(1.08, 1, p) * (1 + exit * 0.15), lerp(1.08, 1, p) * (1 + exit * 0.15));
+    text(c.w, 0, 0, { size: c.size, weight: 500, color: '#8E96A0', alpha: p * c.a * (1 - exit) });
     ctx.restore();
   }
+  ctx.restore();
+  // 陈述
+  const s1 = quint(seg(t, 6.2, 7.0));
+  if (s1 > 0) text('记一笔账，', W / 2, 890 + (1 - s1) * 46, { size: 82, weight: 500, color: COL.grey, alpha: s1 });
+  const s2 = quint(seg(t, 6.55, 7.35));
+  if (s2 > 0) text('不该这么复杂。', W / 2, 1024 + (1 - s2) * 46, { size: 88, weight: 650, alpha: s2, ls: 2 });
+  vignette(0.5);
 }
 
-/* ================= 手机样机（场景 3 / 4 共用） ================= */
+/* ================= 场景 2：陈述卡「只要两秒。」（8 – 12s） ================= */
+function sceneClaim(t) {
+  const rel = t - 8;
+  ctx.fillStyle = COL.space;
+  ctx.fillRect(0, 0, W, H);
+  const p = quint(seg(rel, 0.25, 1.05));
+  if (p > 0) {
+    const sweepP = seg(rel, 1.0, 2.3);
+    ctx.save();
+    ctx.globalAlpha = p;
+    sweepText('只要两秒。', W / 2, 972 + (1 - p) * 40, { size: 132, weight: 600, ls: 6, glow: 'rgba(245,247,250,0.18)' }, sweepP);
+    ctx.restore();
+  }
+  const p2 = quint(seg(rel, 1.1, 1.8));
+  if (p2 > 0) text('从打开，到记完。', W / 2, 1104, { size: 44, weight: 400, color: COL.greyDim, alpha: p2, ls: 4 });
+  vignette(0.45);
+}
+
+/* ================= 手机样机（暗夜悬浮主角） ================= */
 const PH = { x: 125, y: 110, w: 830, h: 1700, r: 112 };
 const SC = { x: 143, y: 128, w: 794, h: 1664, r: 94 };
 const TABS_H = 116, COMMIT_H = 126, KEY_H = 120, KEY_GAP = 20, PAD_X = 28;
@@ -186,15 +244,39 @@ function keyRect(k) {
 }
 
 function drawPhoneShell() {
+  // 底部光晕：屏幕的光洒在“地面”
+  const g = ctx.createRadialGradient(W / 2, PH.y + PH.h + 30, 0, W / 2, PH.y + PH.h + 30, 480);
+  g.addColorStop(0, 'rgba(120,200,170,0.10)');
+  g.addColorStop(1, 'rgba(120,200,170,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, PH.y + PH.h - 200, W, 600);
+  // 机身
   ctx.save();
-  ctx.shadowColor = 'rgba(10,16,24,0.4)';
-  ctx.shadowBlur = 70;
-  ctx.shadowOffsetY = 26;
+  ctx.shadowColor = 'rgba(0,0,0,0.65)';
+  ctx.shadowBlur = 90;
+  ctx.shadowOffsetY = 36;
   rr(PH.x, PH.y, PH.w, PH.h, PH.r);
-  ctx.fillStyle = '#0B0D10'; ctx.fill();
+  ctx.fillStyle = '#131518'; ctx.fill();
   ctx.restore();
+  // 轮廓光：顶部一圈冷白 rim light
+  const rim = ctx.createLinearGradient(0, PH.y, 0, PH.y + PH.h);
+  rim.addColorStop(0, 'rgba(255,255,255,0.30)');
+  rim.addColorStop(0.25, 'rgba(255,255,255,0.06)');
+  rim.addColorStop(0.8, 'rgba(255,255,255,0.02)');
+  rim.addColorStop(1, 'rgba(255,255,255,0.12)');
+  ctx.save();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = rim;
+  rr(PH.x + 1.5, PH.y + 1.5, PH.w - 3, PH.h - 3, PH.r);
+  ctx.stroke();
+  ctx.restore();
+  // 屏幕（黑暗中发光）
+  ctx.save();
+  ctx.shadowColor = 'rgba(235,245,250,0.10)';
+  ctx.shadowBlur = 80;
   rr(SC.x, SC.y, SC.w, SC.h, SC.r);
   ctx.fillStyle = COL.bg; ctx.fill();
+  ctx.restore();
 }
 
 function drawNotch() {
@@ -202,12 +284,11 @@ function drawNotch() {
   ctx.fillStyle = 'rgba(11,13,16,0.95)'; ctx.fill();
 }
 
-// 记账页（应用主界面的重绘）
+// 记账页（应用主界面的重绘，浅色）
 function drawEntryScreen(st) {
   ctx.fillStyle = COL.bg;
   ctx.fillRect(SC.x, SC.y, SC.w, SC.h);
 
-  // 顶部「今日已花」
   ctx.save();
   ctx.translate(W / 2, SC.y + 170);
   const hs = 1 + 0.18 * (st.headPop || 0);
@@ -219,7 +300,6 @@ function drawEntryScreen(st) {
   ], 0, 0, {});
   ctx.restore();
 
-  // 金额
   ctx.save();
   ctx.translate(W / 2, SC.y + 560);
   const as = 1 + 0.14 * (st.amountPop || 0);
@@ -231,7 +311,6 @@ function drawEntryScreen(st) {
   ], 0, 0, { alpha: dim ? 0.5 : 1 });
   ctx.restore();
 
-  // 键盘
   for (const k of Object.keys(KEY_POS)) {
     const kr = keyRect(k);
     const pr = (st.pressed && st.pressed.key === k) ? st.pressed.p : 0;
@@ -242,11 +321,10 @@ function drawEntryScreen(st) {
     ctx.fillStyle = pr > 0 ? COL.keyPress : COL.card;
     ctx.fill();
     if (k === 'del') text('⌫', 0, 16, { size: 44, color: COL.sub });
-    else text(k, 0, 19, { size: 54, weight: 500 });
+    else text(k, 0, 19, { size: 54, weight: 500, color: COL.text });
     ctx.restore();
   }
 
-  // 记一笔按钮
   const gr = { x: SC.x + PAD_X, y: COMMIT_Y, w: SC.w - PAD_X * 2, h: COMMIT_H };
   const gp = (st.pressed && st.pressed.key === 'go') ? st.pressed.p : 0;
   ctx.save();
@@ -260,7 +338,6 @@ function drawEntryScreen(st) {
 
   drawTabbar(0);
 
-  // toast
   if (st.toastA > 0) {
     const label = '已记入 ¥25.5';
     const tw = measure(label, 500, 34) + 72;
@@ -284,10 +361,10 @@ function drawTabbar(active) {
   });
 }
 
-/* ================= 场景 3：两秒演示（10 – 18.5s） ================= */
+/* ================= 场景 3：演示（12 – 18s） ================= */
 const TAPS = [
-  { key: '2', at: 1.2 }, { key: '5', at: 1.7 }, { key: '.', at: 2.2 },
-  { key: '5', at: 2.7 }, { key: 'go', at: 3.3 }
+  { key: '2', at: 2.5 }, { key: '5', at: 3.0 }, { key: '.', at: 3.5 },
+  { key: '5', at: 4.0 }, { key: 'go', at: 4.6 }
 ];
 
 function demoState(rel) {
@@ -302,24 +379,32 @@ function demoState(rel) {
   }
   st.amountStr = s === '' ? '0' : s;
   st.amountPop = lastChange > 0 ? 1 - seg(rel, lastChange, lastChange + 0.2) : 0;
-  if (rel >= 3.3) {
+  if (rel >= 4.6) {
     st.headMoney = '¥63.5'; st.headCount = 4;
-    st.headPop = 1 - seg(rel, 3.35, 3.62);
-    st.btnFlash = 1 - seg(rel, 3.3, 3.62);
-    st.toastIn = easeOut(seg(rel, 3.42, 3.68));
-    st.toastA = st.toastIn * (1 - seg(rel, 5.2, 5.5));
+    st.headPop = 1 - seg(rel, 4.65, 4.92);
+    st.btnFlash = 1 - seg(rel, 4.6, 4.92);
+    st.toastIn = easeOut(seg(rel, 4.72, 4.98));
+    st.toastA = st.toastIn * (1 - seg(rel, 5.6, 5.9));
   }
   return st;
 }
 
-function sceneDemo(t) {
-  const rel = t - 10;
-  ctx.fillStyle = COL.stage; ctx.fillRect(0, 0, W, H);
+// 手机场景通用：入场 + 极缓推近
+function phoneDrift(rel, inDur, zoomSpan) {
+  const p = quint(seg(rel, 0, inDur));
+  const s = lerp(0.955, 0.99, seg(rel, 0, zoomSpan));
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(s, s);
+  ctx.translate(-W / 2, -H / 2);
+  ctx.translate(0, (1 - p) * 240);
+  ctx.globalAlpha = Math.min(1, seg(rel, 0, inDur * 0.7));
+}
 
-  const p = easeOut(seg(rel, 0, 0.7));
+function sceneDemo(t) {
+  const rel = t - 12;
+  space(t);
   ctx.save();
-  ctx.globalAlpha = p;
-  ctx.translate(0, (1 - p) * 1500);
+  phoneDrift(rel, 1.2, 6);
   drawPhoneShell();
   ctx.save();
   rr(SC.x, SC.y, SC.w, SC.h, SC.r); ctx.clip();
@@ -337,10 +422,10 @@ function sceneDemo(t) {
     const cx = kr.x + kr.w / 2, cyy = kr.y + kr.h / 2;
     const sc = lerp(1.45, 1, easeOut(seg(rel, tp.at - 0.22, tp.at + 0.02)));
     ctx.save();
-    ctx.globalAlpha = a * 0.55;
+    ctx.globalAlpha = a * 0.5;
     ctx.beginPath(); ctx.arc(cx, cyy, 44 * sc, 0, Math.PI * 2);
     ctx.fillStyle = '#28323E'; ctx.fill();
-    ctx.globalAlpha = a * 0.9;
+    ctx.globalAlpha = a * 0.85;
     ctx.lineWidth = 5;
     ctx.strokeStyle = 'rgba(255,255,255,0.85)';
     ctx.beginPath(); ctx.arc(cx, cyy, 44 * sc, 0, Math.PI * 2); ctx.stroke();
@@ -348,72 +433,75 @@ function sceneDemo(t) {
   }
   ctx.restore();
 
-  // 秒表
-  const chipA = easeOut(seg(rel, 0.85, 1.15));
+  // 秒表：磨砂极简
+  const chipA = quint(seg(rel, 2.0, 2.35));
   if (chipA > 0) {
-    const sw = rel < 1.2 ? 0 : Math.min(rel - 1.2, 2.1);
-    const frozen = rel >= 3.3;
-    const pulse = frozen ? 1 + 0.16 * (1 - seg(rel, 3.3, 3.58)) : 1;
-    const cw = 252, ch = 96, cx = W - 64 - cw / 2, cyy = 156 + ch / 2;
+    const sw = clamp01((rel - 2.5) / 2.1) * 2.1;
+    const frozen = rel >= 4.6;
+    const pulse = frozen ? 1 + 0.12 * (1 - seg(rel, 4.6, 4.88)) : 1;
+    const cw = 240, chh = 92, cx = W - 64 - cw / 2, cyy = 168 + chh / 2;
     ctx.save();
     ctx.globalAlpha = chipA;
     ctx.translate(cx, cyy);
     ctx.scale(pulse, pulse);
-    ctx.shadowColor = 'rgba(10,16,24,0.35)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 8;
-    rr(-cw / 2, -ch / 2, cw, ch, ch / 2);
-    ctx.fillStyle = frozen ? COL.deep : 'rgba(12,17,23,0.88)';
+    rr(-cw / 2, -chh / 2, cw, chh, chh / 2);
+    ctx.fillStyle = frozen ? 'rgba(5,150,105,0.92)' : 'rgba(12,17,23,0.82)';
     ctx.fill();
-    ctx.shadowColor = 'transparent';
-    ctx.beginPath(); ctx.arc(-cw / 2 + 52, 0, 12, 0, Math.PI * 2);
-    ctx.fillStyle = frozen ? '#B8F5DC' : COL.accent; ctx.fill();
-    text(sw.toFixed(1) + ' s', 22, 16, { size: 46, weight: 700, color: '#fff' });
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = frozen ? 'rgba(52,211,153,0.6)' : 'rgba(255,255,255,0.22)';
+    rr(-cw / 2 + 1, -chh / 2 + 1, cw - 2, chh - 2, chh / 2);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(-cw / 2 + 50, 0, 10, 0, Math.PI * 2);
+    ctx.fillStyle = frozen ? '#B8F5DC' : 'rgba(255,255,255,0.6)'; ctx.fill();
+    text(sw.toFixed(1) + ' s', 20, 15, { size: 44, weight: 500, color: COL.white });
     ctx.restore();
   }
-
-  // 字幕
-  const scrim = 0.68 * easeOut(seg(rel, 5.6, 6.05));
-  if (scrim > 0) {
-    ctx.fillStyle = 'rgba(8,12,16,' + scrim + ')'; ctx.fillRect(0, 0, W, H);
-    const c1 = easeOut(seg(rel, 5.75, 6.3));
-    if (c1 > 0) {
-      ctx.save();
-      ctx.globalAlpha = c1;
-      segLine([
-        { t: '2.1 秒', color: '#34D399', size: 118, weight: 800 },
-        { t: '，记完了。', color: '#F2F6FA', size: 78, weight: 600 }
-      ], W / 2, 890 + (1 - c1) * 40, {});
-      ctx.restore();
-    }
-    const c2 = easeOut(seg(rel, 6.4, 6.9));
-    if (c2 > 0) text('从打开到记完，就这么快', W / 2, 1020 + (1 - c2) * 30, { size: 44, color: 'rgba(242,246,250,0.78)', alpha: c2 });
-  }
+  vignette(0.4);
 }
 
-/* ================= 场景 4：统计（18.5 – 25s） ================= */
+/* ================= 场景 4：陈述卡「2.1 秒。」（18 – 21s） ================= */
+function sceneTime(t) {
+  const rel = t - 18;
+  ctx.fillStyle = COL.space;
+  ctx.fillRect(0, 0, W, H);
+  const p = quint(seg(rel, 0.15, 0.9));
+  if (p > 0) {
+    ctx.save();
+    ctx.globalAlpha = p;
+    segLine([
+      { t: '2.1 秒', color: COL.glow, size: 150, weight: 700, glow: 'rgba(52,211,153,0.35)' },
+      { t: '，记完了。', color: COL.white, size: 88, weight: 600 }
+    ], W / 2, 972 + (1 - p) * 44, {});
+    ctx.restore();
+  }
+  const p2 = quint(seg(rel, 0.8, 1.5));
+  if (p2 > 0) text('比犹豫要不要记，还快。', W / 2, 1104, { size: 44, color: COL.greyDim, alpha: p2, ls: 3 });
+  vignette(0.45);
+}
+
+/* ================= 场景 5：统计（21 – 24.8s） ================= */
 function drawStatsScreen(rel) {
   ctx.fillStyle = COL.bg;
   ctx.fillRect(SC.x, SC.y, SC.w, SC.h);
-  text('统计', SC.x + 40, SC.y + 160, { size: 60, weight: 700, align: 'left' });
+  text('统计', SC.x + 40, SC.y + 160, { size: 60, weight: 700, align: 'left', color: COL.text });
 
-  // 三张卡片
   const cards = [
     { t: '今日', v: 63.5, n: '4 笔', dec: 1 },
     { t: '本周', v: 328, n: '18 笔', dec: 0 },
     { t: '本月', v: 1276, n: '67 笔', dec: 0 }
   ];
   const cw = (SC.w - 72 - 32) / 3;
-  const countP = easeOut(seg(rel, 0.45, 1.5));
+  const countP = easeOut(seg(rel, 0.5, 1.5));
   cards.forEach((c, i) => {
     const x = SC.x + 36 + i * (cw + 16), y = SC.y + 210;
     rr(x, y, cw, 210, 28); ctx.fillStyle = COL.card; ctx.fill();
     text(c.t, x + 28, y + 66, { size: 28, color: COL.sub, align: 'left' });
     const val = c.v * countP;
     const str = '¥' + (c.dec ? val.toFixed(1) : Math.round(val).toLocaleString('en-US'));
-    text(str, x + 28, y + 130, { size: 40, weight: 700, align: 'left' });
+    text(str, x + 28, y + 130, { size: 40, weight: 700, align: 'left', color: COL.text });
     text(c.n, x + 28, y + 172, { size: 24, color: COL.sub, align: 'left', alpha: countP });
   });
 
-  // 近 7 天
   const b1y = SC.y + 456;
   rr(SC.x + 36, b1y, SC.w - 72, 520, 28); ctx.fillStyle = COL.card; ctx.fill();
   text('近 7 天', SC.x + 72, b1y + 64, { size: 30, weight: 600, color: COL.sub, align: 'left' });
@@ -422,7 +510,7 @@ function drawStatsScreen(rel) {
   const labs = ['六', '日', '一', '二', '三', '四', '今'];
   const innerW = SC.w - 72 - 72, slotW = innerW / 7, maxH = 290, baseY = b1y + 430;
   for (let i = 0; i < 7; i++) {
-    const bp = easeOut(seg(rel, 1.0 + i * 0.11, 1.5 + i * 0.11));
+    const bp = easeOut(seg(rel, 0.9 + i * 0.1, 1.4 + i * 0.1));
     const bh = Math.max(6, hts[i] * maxH * bp);
     const bx = SC.x + 72 + i * slotW + (slotW - 54) / 2;
     rr(bx, baseY - bh, 54, bh, [12, 12, 5, 5]);
@@ -432,7 +520,6 @@ function drawStatsScreen(rel) {
     text(labs[i], bx + 27, baseY + 46, { size: 26, weight: i === 6 ? 650 : 400, color: i === 6 ? COL.deep : COL.sub });
   }
 
-  // 月度汇总
   const b2y = b1y + 520 + 24;
   rr(SC.x + 36, b2y, SC.w - 72, 400, 28); ctx.fillStyle = COL.card; ctx.fill();
   text('月度汇总', SC.x + 72, b2y + 64, { size: 30, weight: 600, color: COL.sub, align: 'left' });
@@ -442,14 +529,14 @@ function drawStatsScreen(rel) {
     ['2026年5月', '¥2,183', '105 笔', false]
   ];
   months.forEach((mrow, i) => {
-    const mp = easeOut(seg(rel, 2.35 + i * 0.22, 2.75 + i * 0.22));
+    const mp = easeOut(seg(rel, 1.9 + i * 0.2, 2.3 + i * 0.2));
     if (mp <= 0) return;
     const my = b2y + 100 + i * 100;
     ctx.save();
     ctx.globalAlpha = mp;
     ctx.translate((1 - mp) * 46, 0);
     if (i > 0) { ctx.fillStyle = 'rgba(23,32,42,0.08)'; ctx.fillRect(SC.x + 72, my - 4, SC.w - 144, 2); }
-    text(mrow[0], SC.x + 72, my + 62, { size: 32, align: 'left' });
+    text(mrow[0], SC.x + 72, my + 62, { size: 32, align: 'left', color: COL.text });
     if (mrow[3]) {
       const nx = SC.x + 72 + measure(mrow[0], 400, 32) + 16;
       rr(nx, my + 30, 92, 44, 14); ctx.fillStyle = COL.soft; ctx.fill();
@@ -470,8 +557,11 @@ function drawStatsScreen(rel) {
 }
 
 function sceneStats(t) {
-  const rel = t - 18.5;
-  ctx.fillStyle = COL.stage; ctx.fillRect(0, 0, W, H);
+  const rel = t - 21;
+  space(t);
+  ctx.save();
+  phoneDrift(rel + 1.2, 1.2, 3.8);   // 无需再入场，只保留缓慢推近
+  ctx.globalAlpha = 1;
   drawPhoneShell();
   const m = easeInOut(seg(rel, 0.05, 0.5));
   ctx.save();
@@ -488,47 +578,46 @@ function sceneStats(t) {
   ctx.restore();
   ctx.restore();
   drawNotch();
-
-  // 字幕
-  const scrim = 0.55 * easeOut(seg(rel, 4.0, 4.45));
-  if (scrim > 0) {
-    ctx.fillStyle = 'rgba(8,12,16,' + scrim + ')'; ctx.fillRect(0, 0, W, H);
-    const c1 = easeOut(seg(rel, 4.15, 4.65));
-    if (c1 > 0) text('每天、每周、每月', W / 2, 920 + (1 - c1) * 40, { size: 74, weight: 600, color: '#F2F6FA', alpha: c1 });
-    const c2 = easeOut(seg(rel, 4.6, 5.1));
-    if (c2 > 0) {
-      ctx.save();
-      ctx.globalAlpha = c2;
-      segLine([
-        { t: '花在哪，', color: '#F2F6FA' },
-        { t: '清清楚楚', color: '#34D399', weight: 800 },
-        { t: '。', color: '#F2F6FA' }
-      ], W / 2, 1060 + (1 - c2) * 30, { size: 74, weight: 600 });
-      ctx.restore();
-    }
-  }
+  ctx.restore();
+  vignette(0.4);
 }
 
-/* ================= 场景 5：收尾（25 – 30s） ================= */
-function sceneEnd(t) {
-  const rel = t - 25;
-  ctx.fillStyle = COL.stage; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = COL.bg;
-  ctx.globalAlpha = seg(rel, 0, 0.4);
+/* ================= 场景 6：陈述卡「清清楚楚。」（24.8 – 27.5s） ================= */
+function sceneClear(t) {
+  const rel = t - 24.8;
+  ctx.fillStyle = COL.space;
   ctx.fillRect(0, 0, W, H);
-  ctx.globalAlpha = 1;
+  const p = quint(seg(rel, 0.15, 0.9));
+  if (p > 0) text('每一笔花销，', W / 2, 908 + (1 - p) * 40, { size: 76, weight: 500, color: COL.grey, alpha: p });
+  const p2 = quint(seg(rel, 0.5, 1.25));
+  if (p2 > 0) text('清清楚楚。', W / 2, 1046 + (1 - p2) * 40, { size: 100, weight: 650, alpha: p2, ls: 4, glow: 'rgba(245,247,250,0.15)' });
+  vignette(0.45);
+}
 
-  // 图标
-  const ip = seg(rel, 0.1, 0.75);
+/* ================= 场景 7：落版（27.5 – 34s） ================= */
+function sceneEnd(t) {
+  const rel = t - 27.5;
+  ctx.fillStyle = COL.space;
+  ctx.fillRect(0, 0, W, H);
+  // 图标身后的呼吸光晕
+  const halo = quint(seg(rel, 0.3, 1.4)) * (0.9 + 0.1 * Math.sin(rel * 1.4));
+  if (halo > 0) {
+    const g = ctx.createRadialGradient(W / 2, 560, 0, W / 2, 560, 560);
+    g.addColorStop(0, 'rgba(16,185,129,' + 0.16 * halo + ')');
+    g.addColorStop(1, 'rgba(16,185,129,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+  const ip = quint(seg(rel, 0.25, 1.1));
   if (ip > 0) {
-    const s = Math.max(0.001, easeOutBack(ip));
-    const fy = 470 + Math.sin(rel * 1.8) * 5;
+    const s = lerp(0.86, 1, ip);
     ctx.save();
-    ctx.translate(W / 2, fy);
+    ctx.globalAlpha = ip;
+    ctx.translate(W / 2, 560);
     ctx.scale(s, s);
-    ctx.shadowColor = 'rgba(5,150,105,0.32)';
-    ctx.shadowBlur = 70;
-    ctx.shadowOffsetY = 22;
+    ctx.shadowColor = 'rgba(5,150,105,0.45)';
+    ctx.shadowBlur = 90;
+    ctx.shadowOffsetY = 18;
     rr(-125, -125, 250, 250, 58);
     ctx.fillStyle = '#0FA57B'; ctx.fill();
     ctx.shadowColor = 'transparent';
@@ -542,95 +631,224 @@ function sceneEnd(t) {
     }
     ctx.restore();
   }
+  const tp1 = quint(seg(rel, 0.9, 1.6));
+  if (tp1 > 0) text('记账', W / 2, 838 + (1 - tp1) * 26, { size: 96, weight: 650, alpha: tp1, ls: 10 });
+  const tp2 = quint(seg(rel, 1.2, 1.9));
+  if (tp2 > 0) text('两秒钟，记完一笔。', W / 2, 928 + (1 - tp2) * 26, { size: 44, color: COL.grey, alpha: tp2, ls: 2 });
 
-  const tp1 = easeOut(seg(rel, 0.5, 0.95));
-  if (tp1 > 0) text('记账', W / 2, 742 + (1 - tp1) * 30, { size: 92, weight: 700, alpha: tp1, ls: 6 });
-  const tp2 = easeOut(seg(rel, 0.75, 1.2));
-  if (tp2 > 0) text('两秒钟，记完一笔', W / 2, 826 + (1 - tp2) * 30, { size: 44, color: COL.sub, alpha: tp2 });
-
-  const lines = ['免费 · 无广告 · 无注册', '数据只存在你自己的手机里', '不用下载，浏览器打开即用'];
+  const lines = ['免费 · 无广告 · 无注册', '数据只存在你自己的手机里'];
   lines.forEach((s, i) => {
-    const lp = easeOut(seg(rel, 1.25 + i * 0.3, 1.7 + i * 0.3));
-    if (lp > 0) text(s, W / 2, 990 + i * 86 + (1 - lp) * 26, { size: 40, color: 'rgba(23,32,42,0.86)', alpha: lp });
+    const lp = quint(seg(rel, 1.7 + i * 0.25, 2.25 + i * 0.25));
+    if (lp > 0) text(s, W / 2, 1088 + i * 78 + (1 - lp) * 20, { size: 38, color: COL.greyDim, alpha: lp });
   });
 
-  // 二维码 / 网址
-  const qp = seg(rel, 2.5, 3.05);
+  const qp = quint(seg(rel, 2.4, 3.1));
   if (qp > 0) {
-    const s = 0.92 + 0.08 * easeOutBack(qp);
     ctx.save();
-    ctx.globalAlpha = easeOut(qp);
-    ctx.translate(W / 2, 1480);
-    ctx.scale(s, s);
+    ctx.globalAlpha = qp;
+    ctx.translate(W / 2, 1480 + (1 - qp) * 26);
     if (qrOk) {
-      ctx.shadowColor = 'rgba(10,16,24,0.14)';
-      ctx.shadowBlur = 50;
-      ctx.shadowOffsetY = 14;
-      rr(-190, -190, 380, 380, 44);
+      ctx.shadowColor = 'rgba(235,245,250,0.10)';
+      ctx.shadowBlur = 60;
+      rr(-165, -165, 330, 330, 40);
       ctx.fillStyle = '#fff'; ctx.fill();
       ctx.shadowColor = 'transparent';
-      ctx.drawImage(qrImg, -150, -150, 300, 300);
-      text('扫码打开，加到主屏幕', 0, 262, { size: 34, color: COL.sub });
-      text('allenliu2046.github.io/jizhang', 0, 330, { size: 37, weight: 650, color: COL.deep });
+      ctx.drawImage(qrImg, -132, -132, 264, 264);
+      text('扫码打开，加到主屏幕', 0, 236, { size: 32, color: COL.greyDim });
+      text('allenliu2046.github.io/jizhang', 0, 300, { size: 37, weight: 600, color: COL.glow });
     } else {
-      text('浏览器打开', 0, -60, { size: 40, color: COL.sub });
-      text('allenliu2046.github.io/jizhang', 0, 20, { size: 48, weight: 700, color: COL.deep });
-      text('加到主屏幕，就是一个 App', 0, 96, { size: 36, color: COL.sub });
+      text('浏览器打开', 0, -50, { size: 38, color: COL.greyDim });
+      text('allenliu2046.github.io/jizhang', 0, 30, { size: 48, weight: 700, color: COL.glow });
     }
     ctx.restore();
   }
+  vignette(0.42);
 }
 
 /* ================= 总调度 ================= */
 function drawFrame(t) {
   ctx.save();
   ctx.textBaseline = 'alphabetic';
-  if (t < 7.5) scenePain(t);
-  else if (t < 10) scenePivot(t);
-  else if (t < 18.5) sceneDemo(t);
-  else if (t < 25) sceneStats(t);
+  if (t < 8) sceneCloud(t);
+  else if (t < 12) sceneClaim(t);
+  else if (t < 18) sceneDemo(t);
+  else if (t < 21) sceneTime(t);
+  else if (t < 24.8) sceneStats(t);
+  else if (t < 27.5) sceneClear(t);
   else sceneEnd(t);
   ctx.restore();
 }
 
-/* ================= 音效（OfflineAudioContext 合成） ================= */
+/* ================= 配乐（Apple 风氛围乐，OfflineAudioContext 合成） =================
+   A 大调。结构：暗涌铺垫 → 8.3s 和弦绽放 → 12s 心跳脉冲入 → 16.6s 记完冲击
+   → 21s 琶音 → 27.6s 终止和弦 → 混响尾音收黑 */
+const NOTE = { A1: 55, A2: 110, E3: 164.81, F$3: 185, A3: 220, C4: 261.63, C$4: 277.18, E4: 329.63, F$4: 369.99, A4: 440, B4: 493.88, C$5: 554.37, E5: 659.25, A5: 880 };
+
+function makeIR(ac, dur, decay) {
+  const sr = ac.sampleRate, len = Math.floor(sr * dur);
+  const buf = ac.createBuffer(2, len, sr);
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+  }
+  return buf;
+}
+
 async function renderAudio() {
   const sr = 44100;
   const ac = new OfflineAudioContext(2, Math.ceil(DUR * sr), sr);
-  const master = ac.createGain();
-  master.gain.value = 0.9;
-  master.connect(ac.destination);
-  const tone = (t0, freq, dur, gain) => {
+  const master = ac.createGain(); master.gain.value = 0.9;
+  const comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -20; comp.ratio.value = 3; comp.attack.value = 0.01; comp.release.value = 0.3;
+  master.connect(comp); comp.connect(ac.destination);
+  const verb = ac.createConvolver(); verb.buffer = makeIR(ac, 3.2, 2.4);
+  const verbGain = ac.createGain(); verbGain.gain.value = 0.4;
+  verb.connect(verbGain); verbGain.connect(master);
+
+  const out = (g, wet) => { g.connect(master); if (wet > 0) { const s = ac.createGain(); s.gain.value = wet; g.connect(s); s.connect(verb); } };
+
+  // 长音铺底（正弦，慢起慢收）
+  const drone = (t0, dur, freq, peak, atk, rel) => {
     const o = ac.createOscillator(), g = ac.createGain();
     o.type = 'sine'; o.frequency.value = freq;
-    g.gain.setValueAtTime(0, t0);
-    g.gain.linearRampToValueAtTime(gain, t0 + 0.008);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t0 + atk);
+    g.gain.setValueAtTime(Math.max(peak, 0.0002), t0 + dur - rel);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    o.connect(g); g.connect(master);
-    o.start(t0); o.stop(t0 + dur + 0.05);
+    o.connect(g); out(g, 0.25);
+    o.start(t0); o.stop(t0 + dur + 0.1);
   };
-  const noise = (t0, dur, gain, f0, f1) => {
-    const len = Math.ceil(dur * sr), buf = ac.createBuffer(1, len, sr);
-    const d = buf.getChannelData(0);
+  // 温暖 pad：双三角波微失谐 + 低通
+  const pad = (t0, dur, freq, peak, atk, rel, lp) => {
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t0 + atk);
+    g.gain.setValueAtTime(Math.max(peak, 0.0002), t0 + dur - rel);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lp || 1400; f.Q.value = 0.4;
+    f.connect(g); out(g, 0.6);
+    for (const det of [-4, 4]) {
+      const o = ac.createOscillator();
+      o.type = 'triangle'; o.frequency.value = freq; o.detune.value = det;
+      o.connect(f); o.start(t0); o.stop(t0 + dur + 0.1);
+    }
+  };
+  // 心跳脉冲（软底鼓）
+  const pulse = (t0, gain) => {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(110, t0);
+    o.frequency.exponentialRampToValueAtTime(42, t0 + 0.09);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.28);
+    o.connect(g); out(g, 0.12);
+    o.start(t0); o.stop(t0 + 0.4);
+  };
+  // 拨弦（琶音用）
+  const pluck = (t0, freq, gain) => {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'triangle'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.6);
+    o.connect(g); out(g, 0.7);
+    o.start(t0); o.stop(t0 + 0.8);
+  };
+  // 低频冲击 + 空气感
+  const impact = (t0, gain) => {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(72, t0);
+    o.frequency.exponentialRampToValueAtTime(38, t0 + 0.5);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.9);
+    o.connect(g); out(g, 0.3);
+    o.start(t0); o.stop(t0 + 1);
+    const len = Math.floor(sr * 0.18), nb = ac.createBuffer(1, len, sr);
+    const d = nb.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
-    const src = ac.createBufferSource(); src.buffer = buf;
-    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1;
-    bp.frequency.setValueAtTime(f0, t0);
-    bp.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
-    const g = ac.createGain(); g.gain.value = gain;
-    src.connect(bp); bp.connect(g); g.connect(master);
+    const src = ac.createBufferSource(); src.buffer = nb;
+    const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900;
+    const ng = ac.createGain(); ng.gain.value = gain * 0.5;
+    src.connect(f); f.connect(ng); out(ng, 0.5);
     src.start(t0);
   };
-  for (const rt of rowTimes) noise(rt, 0.045, 0.05, 800, 500);       // 表单堆叠的密集嗒声
-  noise(7.5, 0.5, 0.08, 300, 1400);                                   // 转场
-  noise(18.55, 0.45, 0.07, 350, 1200);
-  noise(25.05, 0.5, 0.06, 300, 1000);
-  for (const tp of TAPS) if (tp.key !== 'go') { tone(10 + tp.at, 1650, 0.06, 0.16); tone(10 + tp.at, 3300, 0.04, 0.05); }
-  tone(13.3, 660, 0.5, 0.16);                                         // 记一笔 · 叮
-  tone(13.36, 990, 0.7, 0.14);
-  tone(25.7, 523.25, 1.6, 0.07);                                      // 结尾和弦
-  tone(25.74, 659.25, 1.6, 0.06);
-  tone(25.78, 783.99, 1.8, 0.06);
+  // 上升的气流（riser）
+  const riser = (t0, dur, gain) => {
+    const len = Math.floor(sr * dur), nb = ac.createBuffer(1, len, sr);
+    const d = nb.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (i / len);
+    const src = ac.createBufferSource(); src.buffer = nb;
+    const f = ac.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 1.4;
+    f.frequency.setValueAtTime(320, t0);
+    f.frequency.exponentialRampToValueAtTime(2600, t0 + dur);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + dur * 0.85);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur + 0.15);
+    src.connect(f); f.connect(g); out(g, 0.5);
+    src.start(t0);
+  };
+  // 键盘轻嗒（UI 音，几乎不进混响）
+  const tick = (t0) => {
+    for (const [fr, gn, du] of [[1750, 0.11, 0.05], [3500, 0.04, 0.03]]) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'sine'; o.frequency.value = fr;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gn, t0 + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + du);
+      o.connect(g); out(g, 0.08);
+      o.start(t0); o.stop(t0 + du + 0.05);
+    }
+  };
+
+  /* —— 编曲 —— */
+  // 0–12s 暗涌：低频铺底贯穿全片
+  drone(0, 33.5, NOTE.A1, 0.055, 4, 3);
+  drone(0.5, 11, NOTE.A2, 0.03, 3, 2);
+  // 词云段的小调色彩（A + C 自然音，微暗）
+  pad(1.2, 6.6, NOTE.A3, 0.028, 2.5, 1.5, 700);
+  pad(2.2, 5.6, NOTE.C4, 0.02, 2.5, 1.5, 600);
+  // riser 推向陈述卡
+  riser(6.6, 1.6, 0.05);
+  // 8.3s「只要两秒。」：大三和弦绽放
+  impact(8.3, 0.13);
+  pad(8.3, 4.2, NOTE.A2, 0.05, 0.6, 1.6, 1600);
+  pad(8.3, 4.2, NOTE.C$4, 0.038, 0.8, 1.6, 1800);
+  pad(8.35, 4.2, NOTE.E4, 0.034, 1.0, 1.6, 1800);
+  pluck(9.0, NOTE.A4, 0.045);
+  pluck(9.6, NOTE.E5, 0.032);
+  // 12s 演示：心跳脉冲入场，逐渐清晰
+  for (let i = 0; i < 12; i++) pulse(12 + i * 0.75, 0.055 + i * 0.0022);
+  pad(12, 6, NOTE.A2, 0.032, 1.5, 1.5, 1000);
+  pad(12.5, 5.5, NOTE.E3, 0.026, 1.5, 1.5, 1000);
+  // 键盘四声嗒 + 记完冲击
+  tick(14.5); tick(15.0); tick(15.5); tick(16.0);
+  impact(16.6, 0.15);
+  pluck(16.62, NOTE.A5, 0.05);
+  pluck(16.7, NOTE.E5, 0.035);
+  // 18s「2.1 秒。」卡：温暖持续
+  pad(18.2, 2.8, NOTE.A3, 0.04, 0.8, 1.2, 1500);
+  pad(18.25, 2.8, NOTE.C$4, 0.03, 0.9, 1.2, 1500);
+  // 21s 统计：上行琶音（数据生长的感觉）；脉冲在终止和弦前停下，留一口气
+  for (let i = 0; i < 8; i++) pulse(21 + i * 0.75, 0.06);
+  const arp = [NOTE.A4, NOTE.C$5, NOTE.E5, NOTE.A5, NOTE.E5, NOTE.C$5, NOTE.A4, NOTE.E5];
+  arp.forEach((fq, i) => pluck(21.3 + i * 0.35, fq, 0.036));
+  pad(21, 3.8, NOTE.F$3, 0.03, 1.2, 1.2, 1100);
+  // 24.9s「清清楚楚。」卡
+  pad(24.9, 2.6, NOTE.A3, 0.038, 0.7, 1.2, 1400);
+  pad(24.95, 2.6, NOTE.E4, 0.028, 0.9, 1.2, 1400);
+  // 27.5s 落版：终止大和弦（Amaj9），一切归于安宁
+  impact(27.9, 0.11);
+  pad(27.8, 5.6, NOTE.A2, 0.05, 1.2, 2.8, 1600);
+  pad(27.9, 5.5, NOTE.A3, 0.04, 1.4, 2.8, 1800);
+  pad(28.0, 5.4, NOTE.C$4, 0.034, 1.6, 2.8, 1800);
+  pad(28.1, 5.3, NOTE.E4, 0.03, 1.8, 2.8, 1800);
+  pad(28.4, 5.0, NOTE.B4, 0.02, 2.2, 2.6, 2000);
+  pluck(29.2, NOTE.A5, 0.028);
+
   const rendered = await ac.startRendering();
   await fetch('/audio', { method: 'POST', body: encodeWav(rendered) });
 }
@@ -666,7 +884,7 @@ window.startExport = async function () {
     await fetch('/frame/' + String(i).padStart(4, '0'), { method: 'POST', body: blob });
     if (i % 60 === 0) { hud.textContent = '导出中 ' + i + ' / ' + TOTAL; console.log('export: frame ' + i); }
   }
-  hud.textContent = '合成音效…';
+  hud.textContent = '合成配乐…';
   try { await renderAudio(); } catch (e) { console.warn('audio skipped: ' + e); }
   await fetch('/done', { method: 'POST' });
   hud.textContent = '导出完成 ✓';
